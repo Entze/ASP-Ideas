@@ -1,0 +1,7 @@
+name: asp-basics
+channels:
+  - potassco
+  - conda-forge
+dependencies:
+  - clingo
+  - notebook
