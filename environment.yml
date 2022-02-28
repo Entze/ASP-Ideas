@@ -1,7 +1,9 @@
-name: asp-basics
+name: asp-ideas
 channels:
   - potassco
   - conda-forge
 dependencies:
-  - clingo
-  - notebook
+  - python>=3.6,<4
+  - clingo=5.5
+  - jupyter=1.0
+  - jupyterlab=3.2
