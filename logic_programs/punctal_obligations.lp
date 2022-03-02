@@ -3,16 +3,16 @@ obligationtype(punctual).
 
 
 % A15: "punctual obligation d_holdsAt"
-d_holdsAt(obligation(punctual, Ts, X), Ts) :-
-  happens(trigger(obligation(punctual, Ts, X), N), Tt),
-  Ts = Tt + N, N >= 0.
+d_holdsAt(obligation(punctual, Time_Start, X), Time_Start) :-
+  happens(trigger(obligation(punctual, Time_Start, X), Delay), Time_Trigger),
+  Time_Start = Time_Trigger + Delay, Delay >= 0.
 
 % A16: "punctual obligation d_terminates"
-d_terminates(obligation(punctual, Ts, X), Ts) :-
-  happens(trigger(obligation(punctual, Ts, X), N), Tt),
-  Ts = Tt + N, N >= 0.
+d_terminates(obligation(punctual, Time_Start, X), Time_Start) :-
+  happens(trigger(obligation(punctual, Time_Start, X), Delay), Time_Trigger),
+  Time_Start = Time_Trigger + Delay, Delay >= 0.
 
 % A17: "punctual obligation violation"
-happens(violation(obligation(punctual, Ts, X)), Tv) :-
-  d_holdsAt(obligation(punctual, Ts, X), Ts),
-  not happens(X, Ts), not holdsAt(X, Ts), Tv = Ts.
+happens(violation(obligation(punctual, Time_Start, X)), Time_Violation) :-
+  d_holdsAt(obligation(punctual, Time_Start, X), Time_Start),
+  not happens(X, Time_Start), not holdsAt(X, Time_Start), Time_Violation = Time_Start.
