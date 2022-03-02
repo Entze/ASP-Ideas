@@ -12,4 +12,4 @@
 % "d_clipped definition"
 d_clipped(T1, P, T2) :-
   time(T1), time(T2),
-  happens(trigger(X, Delay, T), T1 <= T, T < T2, d_terminates(X, P, T).
+  happens(trigger(X, Delay, T)), T1 <= T, T < T2, d_terminates(X, P, T).
