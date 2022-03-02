@@ -8,7 +8,7 @@ d_holdsAt(obligation(punctual, Time_Start, X), Time_Start) :-
   Time_Start = Time_Trigger + Delay, Delay >= 0.
 
 % A16: "punctual obligation d_terminates"
-d_terminates(obligation(punctual, Time_Start, X), Time_Start) :-
+d_terminates(trigger(obligation(punctual, Time_Start, X), Delay), obligation(punctual, Time_Start, X), Time_Start) :-
   happens(trigger(obligation(punctual, Time_Start, X), Delay), Time_Trigger),
   Time_Start = Time_Trigger + Delay, Delay >= 0.
 
