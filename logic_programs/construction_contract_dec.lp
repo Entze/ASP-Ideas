@@ -41,5 +41,5 @@ happens(contractor_signs_contract, 2).
 happens(employer_transfers_initial_payment,4).
 
 
-%!show_trace holdsAt(employer_transferred_initial_payment, 5).
+%! show_trace holdsAt(employer_transferred_initial_payment, 5).
 %!show_trace d_holdsAt(obligation(achievement, 3, employer_transferred_initial_payment), 5).

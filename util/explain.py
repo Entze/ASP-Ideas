@@ -129,7 +129,8 @@ def _check_derivation_path(k, N, O, V, R, C, dependency_assumptions):
                     return False, dependency_assumptions
             else:
                 if i in R:
-                    
+                    pass
+
     return None, None
 
 
