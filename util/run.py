@@ -1,19 +1,26 @@
 import datetime
 import os
 import time
+from typing import Iterable
 
 import clingo
 from clingo import SymbolType, Symbol
 
 
-def solve(program, filter_symbols=None, nr_of_models: int = 0, report=True):
+def solve(programs, filter_symbols=None, nr_of_models: int = 0, report=True, sep=' '):
     ctl = clingo.Control(["--models", str(nr_of_models)])
-    if isinstance(program, str):
-        if os.path.isfile(program):
+    if isinstance(programs, str):
+        if os.path.isfile(programs):
             # program is a path
-            ctl.load(program)
+            ctl.load(programs)
         else:
-            ctl.add("base", [], program)
+            ctl.add("base", [], programs)
+    elif isinstance(programs, Iterable):
+        for program in programs:
+            if os.path.isfile(program):
+                ctl.load(program)
+            else:
+                ctl.add("base", [], program)
 
     ctl.ground([("base", [])])
 
@@ -65,7 +72,9 @@ def solve(program, filter_symbols=None, nr_of_models: int = 0, report=True):
                         cost_out = ""
 
                     print(
-                        "Answer {:2d}: {}{}{}{}.{}".format(model.number, "{ ", model, " }",
+                        "Answer {:2d}: {}{}{}{}.{}".format(model.number, "{" + sep,
+                                                           sep.join(sorted(map(symbol_to_string, answer_set))),
+                                                           sep + "}",
                                                            cost_out, time_out))
         result = solver.get()
         if result.unknown:
@@ -116,5 +125,23 @@ def compare_symbols(filter_symbol, symbol: Symbol):
                 predicate_nr_of_args = e
     return (symbol_name is not None or symbol_type is not None or predicate_nr_of_args is not None) and (
             symbol_name is None or symbol.name == symbol_name) and (
-                       symbol_type is None or symbol.type == symbol_type) and (
+                   symbol_type is None or symbol.type == symbol_type) and (
                    predicate_nr_of_args is None or predicate_nr_of_args == len(symbol.arguments))
+
+
+def symbol_to_string(symbol: Symbol) -> str:
+    sign = "-" if symbol.type == SymbolType.Function and symbol.negative else ""
+    if symbol.type == SymbolType.Function:
+        if not symbol.arguments:
+            return sign + symbol.name
+        arguments = map(symbol_to_string, symbol.arguments)
+        return sign + f"{symbol.name}({','.join(arguments)})"
+    elif symbol.type == SymbolType.Number:
+        return str(symbol.number)
+    elif symbol.type == SymbolType.String:
+        return symbol.string
+    elif symbol.type == SymbolType.Infimum:
+        return "#inf"
+    else:
+        assert symbol.type == SymbolType.Supremum
+        return "#sup"

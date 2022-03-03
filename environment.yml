@@ -7,3 +7,6 @@ dependencies:
   - clingo=5.5
   - jupyter=1.0
   - jupyterlab=3.2
+  - pip
+  - pip:
+      - xclingo
