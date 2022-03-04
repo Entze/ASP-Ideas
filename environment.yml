@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python>=3.6,<4
   - clingo=5.5
+  - networkx=2.7
   - jupyter=1.0
   - jupyterlab=3.2
   - pip
