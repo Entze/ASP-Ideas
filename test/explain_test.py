@@ -1,3 +1,4 @@
+import networkx as nx
 """
 asp 1 0 0
 5 1 2
@@ -15,7 +16,7 @@ asp 1 0 0
 4 1 f 1 6
 0
 """
-from util.explain import _preprocess, negation_atoms, _derivation_path, _dependency_assumption
+from util.explain import _preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph
 
 example_literal_mapping = dict(b=2, k=4, a=3, e=1, c=5, f=6)
 a, b, c, e, f, k = example_literal_mapping['a'], example_literal_mapping['b'], example_literal_mapping['c'], \
@@ -91,8 +92,15 @@ def assumption_func_test():
     D = _dependency_assumption(DA)
     assert D == {frozenset({a}), frozenset({k})}, f"{D} != {({frozenset({a}), frozenset({k})})}"
 
+def explanation_graph_test():
+    graph = explanation_graph(f, example_derivable_dict, {a}, {b, f, e})
+    assert graph is not None
+    nx.draw(graph)
+
+
 
 preprocess_test()
 negation_atoms_test()
 derivation_path_test()
 assumption_func_test()
+explanation_graph_test()

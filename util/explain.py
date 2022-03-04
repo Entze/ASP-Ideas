@@ -1,5 +1,7 @@
 import itertools
 
+import networkx as nx
+
 
 def _preprocess(program_dict: dict, facts: set, answer_set: set) -> dict:
     derivable_dict = dict()
@@ -178,35 +180,52 @@ def _cycle_identification(cycle_dict, s, e):
 
 def explanation_graph(atom, derivable_dict, minimal_assumption, answer_set):
     for assumed_atom in minimal_assumption:
-        derivable_dict[-assumed_atom] = ["assume"]
+        derivable_dict[-assumed_atom] = [{"assume"}]
     atom = atom if atom in answer_set else -atom
     for S in derivable_dict[atom]:
-        E_a = dict()
-        E_a[atom] = [S]
-        _get_connection(S, derivable_dict, E_a)
-        # TODO: Untangle paper
+        edge_dict = dict()
+        edge_dict[atom] = [S]
+        _get_connection(S, derivable_dict, edge_dict)
+        paths = [{}]
+        for k in edge_dict:
+            n_paths = []
+            for neighbourhood in edge_dict[k]:
+                for _path in paths:
+                    path = _path.copy()
+                    path[k] = neighbourhood.copy()
+                    n_paths.append(path)
+            paths = n_paths
+        for path in paths:
+            vertex_set = set()
+            reached_stack = list()
+            cycle_dict = dict()
+            graph = nx.DiGraph()
+            graph.add_node(atom)
+            graph = get_graph(atom, graph, path, vertex_set, reached_stack, cycle_dict)
+            if graph is not None:
+                return graph
+    return None
 
 
-def get_graph(k, G, N, V: set, R: list, C):
-    I = N.get(k, set())
-    V.add(k)
-    R.append(k)
+def get_graph(k, graph, path, vertex_set, reached_stack, cycle_dict):
+    I = path.get(k, set())
+    vertex_set.add(k)
+    reached_stack.append(k)
     for i in I:
-        G.add(i)
-        e = (k, i, 0)  # TODO: 0 should be sign, but what is sign?
-        G.add(e)  # TODO: G needs to be a graph datastructure networkx?
-        if i not in V:
-            if not get_graph(i, G, N, V, R, C):
-                return False
-        else:
-            if i in R:
-                if i < 0:
-                    if not _cycle_identification(C, i, i):
-                        return False
-                else:
-                    return False
+        graph.add_node(i)
+        e = (k, i, 0)  # TODO: 0 should be sign
+        graph.add_edge(k, i)
+        if i not in vertex_set:
+            if not get_graph(i, graph, path, vertex_set, reached_stack, cycle_dict):
+                return None
+        elif i in reached_stack:
+            if i < 0:
+                if not _cycle_identification(cycle_dict, i, i):
+                    return None
+            else:
+                return None
 
-    l = R.pop()
-    if l in C:
-        C.discard(l)
-    return G
+    reached = reached_stack.pop()
+    if reached in cycle_dict:
+        del cycle_dict[reached]
+    return graph
