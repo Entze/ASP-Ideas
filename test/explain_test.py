@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import networkx as nx
 """
 asp 1 0 0
@@ -45,7 +47,7 @@ example_derivable_dict = {
 
 
 def preprocess_test():
-    ep = _preprocess(example_program, example_facts, example_answer_set)
+    ep = _preprocess(deepcopy(example_program), deepcopy(example_facts), deepcopy(example_answer_set))
     assert f in ep
     assert len(ep[f]) == 1, f"{len(ep[f])} != 1"
     assert sorted(ep[f][0]) == sorted({-k, -c, e}), f"{sorted(ep[f][0])} != {sorted({-k, -c, e})}"
@@ -75,13 +77,13 @@ def preprocess_test():
 
 
 def negation_atoms_test():
-    nant = negation_atoms(example_program)
+    nant = negation_atoms(deepcopy(example_program))
     assert sorted(nant) == sorted({a, b, c, k}), f"{sorted(nant)} != f{sorted({a, b, c, k})}"
 
 
 def derivation_path_test():
     TA = {c, a, k}
-    T, DA = _derivation_path(TA, example_derivable_dict)
+    T, DA = _derivation_path(TA, deepcopy(example_derivable_dict))
     assert not T
     expected_DA = {a: {k}, k: {a}, c: {k, a}}
     assert DA == expected_DA, f"{DA} != {expected_DA}"
@@ -93,7 +95,7 @@ def assumption_func_test():
     assert D == {frozenset({a}), frozenset({k})}, f"{D} != {({frozenset({a}), frozenset({k})})}"
 
 def explanation_graph_test():
-    graph = explanation_graph(f, example_derivable_dict, {a}, {b, f, e})
+    graph = explanation_graph(f, deepcopy(example_derivable_dict), {a}, {b, f, e})
     assert graph is not None
     nx.draw(graph)
 
