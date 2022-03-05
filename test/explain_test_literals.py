@@ -2,7 +2,8 @@ from copy import deepcopy
 
 import networkx as nx
 
-from util.explain import _preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph
+from util.explain import _preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph, \
+    Literal
 
 """
 asp 1 0 0
@@ -22,9 +23,7 @@ asp 1 0 0
 0
 """
 
-example_literal_mapping = dict(b=2, k=4, a=3, e=1, c=5, f=6)
-a, b, c, e, f, k = example_literal_mapping['a'], example_literal_mapping['b'], example_literal_mapping['c'], \
-                   example_literal_mapping['e'], example_literal_mapping['f'], example_literal_mapping['k']
+a, b, c, e, f, k = (Literal(x, preferred_negation_symbol='~') for x in ('a', 'b', 'c', 'e', 'f', 'k'))
 
 example_program = {
     e: [dict()],
@@ -40,11 +39,11 @@ example_facts = {e}
 example_answer_set = {b, f, e}
 
 example_derivable_dict = {
-    f: [{-k, -c, e}],
-    b: [{-a}],
-    -c: [{-k, -a}],
-    -k: [{b}],
-    -a: [{-k}, {b}],
+    f: [{~k, ~c, e}],
+    b: [{~a}],
+    ~c: [{~k, ~a}],
+    ~k: [{b}],
+    ~a: [{~k}, {b}],
     e: [{"T"}]
 }
 
@@ -53,24 +52,25 @@ def preprocess_test():
     ep = _preprocess(deepcopy(example_program), deepcopy(example_facts), deepcopy(example_answer_set))
     assert f in ep
     assert len(ep[f]) == 1, f"{len(ep[f])} != 1"
-    assert sorted(ep[f][0]) == sorted({-k, -c, e}), f"{sorted(ep[f][0])} != {sorted({-k, -c, e})}"
+    assert sorted(ep[f][0]) == sorted({~k, ~c, e}), f"{sorted(ep[f][0])} != {sorted({~k, ~c, e})}"
 
     assert b in ep
     assert len(ep[b]) == 1, f"{len(ep[b])} != 1"
-    assert sorted(ep[b][0]) == sorted({-a}), f"{sorted(ep[b][0])} != {sorted({-a})}"
+    assert sorted(ep[b][0]) == sorted({~a}), f"{sorted(ep[b][0])} != {sorted({~a})}"
 
-    assert -c in ep
-    assert len(ep[-c]) == 1, f"{ep[-c]} != 1"
-    assert sorted(ep[-c][0]) == sorted({-k, -a}), f"{sorted(ep[-c][0])} != {sorted({-k, -a})}"
+    assert ~c in ep
+    assert len(ep[~c]) == 1, f"{ep[~c]} != 1"
+    assert sorted(ep[~c][0]) == sorted({~k, ~a}), f"{sorted(ep[~c][0])} != {sorted({~k, ~a})}"
 
-    assert -k in ep
-    assert len(ep[-k]) == 1, f"{ep[-k]} != 1"
-    assert sorted(ep[-k][0]) == sorted({b}), f"{sorted(ep[-k][0])} != {sorted({b})}"
+    assert ~k in ep
+    assert len(ep[~k]) == 1, f"{ep[~k]} != 1"
+    assert sorted(ep[~k][0]) == sorted({b}), f"{sorted(ep[~k][0])} != {sorted({b})}"
 
-    assert -a in ep
-    assert len(ep[-a]) == 2, f"{len(ep[-a])} != 2"
-    assert sorted(ep[-a][0]) == sorted({-k}), f"{sorted(ep[-a][0])} != {sorted({-k})}"
-    assert sorted(ep[-a][1]) == sorted({b}), f"{sorted(ep[-a][1])} != {sorted({b})}"
+    assert ~a in ep
+    assert len(ep[~a]) == 2, f"{len(ep[~a])} != 2"
+    actual = sorted(ep[~a])
+    expected = sorted([{b}, {~k}])
+    assert b in actual[0] or ~k in actual[0] and b in actual[1] or ~k in actual[1], f"{actual} != {expected}"
 
     assert e in ep
     assert len(ep[e]) == 1, f"{len(ep[e])} != 1"

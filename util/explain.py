@@ -3,6 +3,92 @@ import itertools
 import networkx as nx
 
 
+class Literal:
+    def __init__(self, name, sign=1, preferred_negation_symbol=None):
+        self.name = name
+        self.sign = sign
+        self._preferred_negation_symbol = preferred_negation_symbol
+
+    @staticmethod
+    def literal_from_string(literal):
+        take_from = 0
+        sign = 1
+        preferred_negation_symbol = None
+        if literal[0] in ('¬', '~', '!', '-'):
+            take_from = 1
+            sign = -1
+            preferred_negation_symbol = literal[0]
+        return Literal(name=literal[take_from:], sign=sign, preferred_negation_symbol=preferred_negation_symbol)
+
+    def is_negated(self):
+        return self.sign < 0
+
+    def get_tuple(self):
+        return self.sign, self.name
+
+    def __neg__(self):
+        return Literal(name=self.name,
+                       sign=-self.sign,
+                       preferred_negation_symbol=self._preferred_negation_symbol or '-')
+
+    def __invert__(self):
+        return Literal(name=self.name,
+                       sign=-self.sign,
+                       preferred_negation_symbol=self._preferred_negation_symbol or '~')
+
+    def lnot(self):
+        return Literal(name=self.name,
+                       sign=-self.sign,
+                       preferred_negation_symbol=self._preferred_negation_symbol or '¬')
+
+    def __abs__(self):
+        return Literal(name=self.name,
+                       sign=1,
+                       preferred_negation_symbol=self._preferred_negation_symbol)
+
+    def __eq__(self, other):
+        if not isinstance(other, Literal):
+            raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
+        return self.get_tuple() == other.get_tuple()
+
+    def __gt__(self, other):
+        if isinstance(other, Literal):
+            return self.get_tuple() > other.get_tuple()
+        elif isinstance(other, int) and other == 0:
+            return self.sign > 0
+        raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
+
+    def __ge__(self, other):
+        if isinstance(other, Literal):
+            return self.get_tuple() >= other.get_tuple()
+        raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
+
+    def __lt__(self, other):
+        if isinstance(other, Literal):
+            return self.get_tuple() < other.get_tuple()
+        elif isinstance(other, int) and other == 0:
+            return self.sign < 0
+        raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
+
+    def __le__(self, other):
+        if isinstance(other, Literal):
+            return self.get_tuple() <= other.get_tuple()
+        raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
+
+    def __repr__(self):
+        return "{}{}".format('~' if self.sign < 0 else "", self.name)
+
+    def __str__(self):
+        return "{}{}".format(self._preferred_negation_symbol or '¬' if self.sign < 0 else "", self.name)
+
+
+    def __hash__(self):
+        return hash(self.get_tuple())
+
+    def __copy__(self):
+        return Literal(self.name, self.sign, self._preferred_negation_symbol)
+
+
 def _preprocess(program_dict: dict, facts: set, answer_set: set) -> dict:
     derivable_dict = dict()
     for head, bodies in program_dict.items():
@@ -33,8 +119,8 @@ def _true_atoms_process(head: int, positive_symbols: list, negative_symbols: lis
 def _false_atoms_process(head: int, positive_rules: list, negative_rules: list, derivable_dict: dict,
                          answer_set: set):
     assert isinstance(derivable_dict, dict)
-    derivable = list(set(frozenset({-p}) for p in positive_rules if p not in answer_set) | set(
-        frozenset({n}) for n in negative_rules if n in answer_set))
+    derivable = list(set(frozenset((-p,)) for p in positive_rules if p not in answer_set) | set(
+        frozenset((n,)) for n in negative_rules if n in answer_set))
     if not derivable_dict[-head]:
         derivable_dict[-head] = derivable
     else:
