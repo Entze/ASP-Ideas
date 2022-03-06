@@ -9,6 +9,7 @@ dependencies:
   - pydot=1.4
   - jupyter=1.0
   - jupyterlab=3.2
+  - ipysheet=0.5
   - pip
   - pip:
       - xclingo

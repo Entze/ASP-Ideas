@@ -5,4 +5,4 @@ c :- a, b.
 b :- not a.
 c :- k.
 f :- e, not k, not c.
-{e}.
+e.

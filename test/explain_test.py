@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import networkx as nx
 
-from util.explain import _preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph
+from util.explain import preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph
 
 """
 asp 1 0 0
@@ -50,7 +50,7 @@ example_derivable_dict = {
 
 
 def preprocess_test():
-    ep = _preprocess(deepcopy(example_program), deepcopy(example_facts), deepcopy(example_answer_set))
+    ep = preprocess(deepcopy(example_program), deepcopy(example_facts), deepcopy(example_answer_set))
     assert f in ep
     assert len(ep[f]) == 1, f"{len(ep[f])} != 1"
     assert sorted(ep[f][0]) == sorted({-k, -c, e}), f"{sorted(ep[f][0])} != {sorted({-k, -c, e})}"

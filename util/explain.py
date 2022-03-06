@@ -47,9 +47,11 @@ class Literal:
                        preferred_negation_symbol=self._preferred_negation_symbol)
 
     def __eq__(self, other):
-        if not isinstance(other, Literal):
-            raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
-        return self.get_tuple() == other.get_tuple()
+        if isinstance(other, Literal):
+            return self.get_tuple() == other.get_tuple()
+        elif isinstance(other, int):
+            return False
+        raise TypeError("Cannot compare Literal with {}".format(type(other).__name__))
 
     def __gt__(self, other):
         if isinstance(other, Literal):
@@ -81,7 +83,6 @@ class Literal:
     def __str__(self):
         return "{}{}".format(self._preferred_negation_symbol or '¬' if self.sign < 0 else "", self.name)
 
-
     def __hash__(self):
         return hash(self.get_tuple())
 
@@ -89,7 +90,7 @@ class Literal:
         return Literal(self.name, self.sign, self._preferred_negation_symbol)
 
 
-def _preprocess(program_dict: dict, facts: set, answer_set: set) -> dict:
+def preprocess(program_dict: dict, facts: set, answer_set: set) -> dict:
     derivable_dict = dict()
     for head, bodies in program_dict.items():
         # print(f"[_preprocess]: {head} start.")
@@ -287,22 +288,26 @@ def explanation_graph(atom, derivable_dict, minimal_assumption, answer_set):
             cycle_dict = dict()
             graph = nx.DiGraph()
             graph.add_node(atom)
-            graph = get_graph(atom, graph, path, vertex_set, reached_stack, cycle_dict)
+            graph = get_graph(atom, graph, path, vertex_set, reached_stack, cycle_dict, derivable_dict)
             if graph is not None:
                 return graph
     return None
 
 
-def get_graph(k, graph, path, vertex_set, reached_stack, cycle_dict):
+def get_graph(k, graph, path, vertex_set, reached_stack, cycle_dict, derivable_dict):
     I = path.get(k, set())
     vertex_set.add(k)
     reached_stack.append(k)
     for i in I:
         graph.add_node(i)
-        e = (k, i, 0)  # TODO: 0 should be sign
-        graph.add_edge(k, i)
+        sign = 0  # 'assume' or 'T' edge
+        if any(i in rule for rule in derivable_dict[k]):
+            sign = 1
+        elif any(-i in rule for rule in derivable_dict[k]):
+            sign = -1
+        graph.add_edge(k, i, edge_type=sign)
         if i not in vertex_set:
-            if not get_graph(i, graph, path, vertex_set, reached_stack, cycle_dict):
+            if not get_graph(i, graph, path, vertex_set, reached_stack, cycle_dict, derivable_dict):
                 return None
         elif i in reached_stack:
             if i < 0:
