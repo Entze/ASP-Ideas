@@ -3,6 +3,8 @@ import itertools
 import networkx as nx
 from clingo import Symbol
 
+from util.display import symbol_to_str
+
 
 class Literal:
     def __init__(self, name, sign=1, preferred_negation_symbol=None):
@@ -23,26 +25,9 @@ class Literal:
 
     @staticmethod
     def literal_from_symbol(symbol: Symbol):
-        name = Literal.__symbol_to_str(symbol)
+        name = symbol_to_str(symbol)
         sign = -1 if symbol.negative else 1
         return Literal(name=name, sign=sign)
-
-    # TODO: This might be more useful somewhere else?
-    @staticmethod
-    def __symbol_to_str(symbol: Symbol):
-        string = ""
-        stack = [symbol]
-        while stack:
-            current = stack.pop()
-            if isinstance(current, Symbol):
-                string += current.name
-                if current.arguments:
-                    stack.append(')')
-                    stack.extend(reversed(current.arguments))
-                    stack.append('(')
-            elif isinstance(current, str):
-                string += current
-        return string
 
     def is_negated(self):
         return self.sign < 0
@@ -174,7 +159,7 @@ def get_minimal_assumptions(cautious_consequences, nant, derivable_dict, answer_
     # print(f"[_assumption_func]: dependency_assumptions = {dependency_assumptions}")
     minimal_assumptions = _dependency_assumption(dependency_assumptions)
     for minimal_assumption in minimal_assumptions:
-        assumptions.add(frozenset((minimal_assumption | terminals,)))
+        assumptions.add(frozenset(minimal_assumption | terminals))
     return assumptions
 
 
