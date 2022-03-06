@@ -1,7 +1,7 @@
 from util.explain import Literal
 
 
-def process_aspif(aspif: str, program_dict = None, literal_dict = None):
+def process_aspif(aspif: str, program_dict=None, literal_dict=None):
     if program_dict is None:
         program_dict = {}
     if literal_dict is None:
@@ -9,6 +9,7 @@ def process_aspif(aspif: str, program_dict = None, literal_dict = None):
     for line in aspif.split('\n'):
         process_aspif_line(line, program_dict, literal_dict)
     return program_dict, literal_dict
+
 
 def process_aspif_line(aspif: str, program_dict, literal_dict):
     asp = aspif.split(' ')
@@ -26,6 +27,8 @@ def process_aspif_line(aspif: str, program_dict, literal_dict):
         _process_aspif_rule(statement, program_dict, literal_dict)
     elif statement_type == '4':
         _process_aspif_show(statement, program_dict, literal_dict)
+    elif statement_type == '5':
+        _process_aspif_external(statement, program_dict, literal_dict)
 
 
 def _process_aspif_rule(statement: list, program_dict: dict, literal_dict: dict):
@@ -72,7 +75,7 @@ def _process_aspif_show(statement: list, program_dict: dict, literal_dict: dict)
     n = int(statement[2])
     if n != 1:
         raise Exception("Unsupported language construct: Multi-show statements are not supported")
-    assert n == 1
+    assert n == 1, "Unexpected language construct"
     literals = [int(l) for l in statement[3:]]
     literal_index = literals[0]
     literal = Literal(name=s)
@@ -90,3 +93,15 @@ def _process_aspif_show(statement: list, program_dict: dict, literal_dict: dict)
                 negative: list = body['negative']
                 i = negative.index(literal_index)
                 negative[i] = literal
+
+
+def _process_aspif_external(statement: list, program_dict: dict, literal_dict: dict):
+    literal = int(statement[0])
+    v = int(statement[1])
+    if v != 2:
+        raise Exception("Unsupported language construct: Only allowed to use true external facts")
+    assert v == 2, "Unexpected language construct"
+
+    if literal in literal_dict:
+       literal = literal_dict[literal]
+    program_dict[literal] = [dict(positive=[], negative=[])]
