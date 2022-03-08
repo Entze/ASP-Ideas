@@ -1,10 +1,18 @@
 import datetime
 import os
 import time
-from typing import Iterable
+from copy import deepcopy
+from pathlib import Path
+from typing import Iterable, Sequence, Union, Optional
 
 import clingo
+import networkx as nx
 from clingo import SymbolType, Symbol
+
+from util.convert import program_str_to_aspif, process_aspif, prepare_program
+from util.display import symbol_to_str
+from util.explain import preprocess, get_minimal_assumptions, negation_atoms, explanation_graph
+from util.literal import Literal
 
 
 def solve(programs, filter_symbols=None, nr_of_models: int = 0, report=True, sep=' '):
@@ -73,7 +81,7 @@ def solve(programs, filter_symbols=None, nr_of_models: int = 0, report=True, sep
 
                     print(
                         "Answer {:2d}: {}{}{}{}.{}".format(model.number, "{" + sep,
-                                                           sep.join(sorted(map(symbol_to_string, answer_set))),
+                                                           sep.join(sorted(map(symbol_to_str, answer_set))),
                                                            sep + "}",
                                                            cost_out, time_out))
         result = solver.get()
@@ -98,7 +106,7 @@ def solve(programs, filter_symbols=None, nr_of_models: int = 0, report=True, sep
             time_out = ""
         if report:
             print(status_out, nr_of_solutions_out, time_out)
-        return answer_sets, models
+        return answer_sets, None
 
 
 def compare_symbols(filter_symbol, symbol: Symbol):
@@ -129,19 +137,46 @@ def compare_symbols(filter_symbol, symbol: Symbol):
                    predicate_nr_of_args is None or predicate_nr_of_args == len(symbol.arguments))
 
 
-def symbol_to_string(symbol: Symbol) -> str:
-    sign = "-" if symbol.type == SymbolType.Function and symbol.negative else ""
-    if symbol.type == SymbolType.Function:
-        if not symbol.arguments:
-            return sign + symbol.name
-        arguments = map(symbol_to_string, symbol.arguments)
-        return sign + f"{symbol.name}({','.join(arguments)})"
-    elif symbol.type == SymbolType.Number:
-        return str(symbol.number)
-    elif symbol.type == SymbolType.String:
-        return symbol.string
-    elif symbol.type == SymbolType.Infimum:
-        return "#inf"
+def explain(program: Union[Path, str],
+            answer_set: Sequence[Union[clingo.Symbol, Literal]] = None,
+            cautious_consequence: Sequence[Union[clingo.Symbol, Literal]] = None,
+            root=None) -> Sequence[Optional[nx.DiGraph]]:
+    if answer_set is None:
+        answer_sets, _ = solve(program, report=False)
+        if answer_sets:
+            answer_set = deepcopy(answer_sets[0])
+        else:
+            raise Exception("No answer set")
+        if cautious_consequence is None and answer_sets:
+            cautious_consequence = deepcopy(answer_sets[0])
+            cautious_consequence.intersection_update(*answer_sets)
+    answer_set_literals = set()
+    for symbol in answer_set:
+        literal = Literal.to_literal(symbol)
+        if root is None:
+            root = literal
+        answer_set_literals.add(literal)
+
+    prepared_program = prepare_program(program)
+    aspif = program_str_to_aspif(prepared_program)
+
+    program_dict, literal_dict = process_aspif(aspif)
+    facts = {head for head in program_dict if
+             len(program_dict[head]) == 0 or (len(program_dict[head]) == 1 and not any(
+                 program_dict[head][0].values()))}
+
+    derivable_dict = preprocess(program_dict=program_dict,
+                                facts=facts,
+                                answer_set=answer_set_literals)
+    if cautious_consequence is None:
+        cautious_consequence_literals = deepcopy(answer_set_literals)
     else:
-        assert symbol.type == SymbolType.Supremum
-        return "#sup"
+        cautious_consequence_literals = {Literal.to_literal(symbol) for symbol in cautious_consequence}
+
+    minimal_assumptions = tuple(
+        get_minimal_assumptions(cautious_consequence_literals, negation_atoms(program_dict), deepcopy(derivable_dict),
+                                answer_set_literals))
+
+    return tuple(explanation_graph(root, deepcopy(derivable_dict), minimal_assumption, answer_set_literals) for
+                 minimal_assumption in
+                 minimal_assumptions)

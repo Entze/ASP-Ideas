@@ -1,4 +1,55 @@
-from util.explain import Literal
+import functools
+import os.path
+import subprocess
+from pathlib import Path
+from typing import Union
+
+import clingo.ast
+
+from util.literal import Literal
+
+
+def file_to_aspif(path):
+    p = Path(path)
+    output = subprocess.run(['gringo', p], stdout=subprocess.PIPE)
+    return output.stdout.decode('utf-8')
+
+
+def program_str_to_aspif(program: str):
+    output = subprocess.run(['gringo'], input=program.encode('utf-8'), check=True, capture_output=True)
+    return output.stdout.decode('utf-8')
+
+
+def prepare_program(program: Union[str, Path]):
+    if isinstance(program, str) and os.path.isfile(program) or isinstance(program, Path):
+        statements = _prepare_program_file(program)
+    else:
+        statements = _prepare_program_str(program)
+    return '\n'.join(map(str, statements))
+
+
+def _prepare_program_file(path):
+    statements = []
+    clingo.ast.parse_files((path,), functools.partial(_prepare_statement, statements=statements))
+    return statements
+
+
+def _prepare_program_str(program):
+    statements = []
+    clingo.ast.parse_string(program, functools.partial(_prepare_statement, statements=statements))
+    return statements
+
+
+def _prepare_statement(statement: clingo.ast.AST, statements):
+    if statement.ast_type != clingo.ast.ASTType.Rule:
+        statements.append(str(statement))
+    else:
+        loc, head, body = statement.values()
+        if not body:
+            clingo.ast.parse_string("#external {}. [true]".format(head),
+                                    functools.partial(_prepare_statement, statements=statements))
+        else:
+            statements.append(statement)
 
 
 def process_aspif(aspif: str, program_dict=None, literal_dict=None):
@@ -73,7 +124,9 @@ def _process_aspif_show(statement: list, program_dict: dict, literal_dict: dict)
     m = statement[0]
     s = statement[1]
     n = int(statement[2])
-    if n != 1:
+    if n == 0:
+        raise Exception("Unsupported language construct: Empty show statements are not supported")
+    elif n > 1:
         raise Exception("Unsupported language construct: Multi-show statements are not supported")
     assert n == 1, "Unexpected language construct"
     literals = [int(l) for l in statement[3:]]
@@ -98,9 +151,6 @@ def _process_aspif_show(statement: list, program_dict: dict, literal_dict: dict)
 def _process_aspif_external(statement: list, program_dict: dict, literal_dict: dict):
     literal = int(statement[0])
     v = int(statement[1])
-    if v != 2:
-        raise Exception("Unsupported language construct: Only allowed to use true external facts")
-    assert v == 2, "Unexpected language construct"
 
     if literal in literal_dict:
         literal = literal_dict[literal]

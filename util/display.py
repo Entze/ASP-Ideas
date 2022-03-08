@@ -1,17 +1,32 @@
 import networkx as nx
-from clingo import Symbol
+from clingo import Symbol, SymbolType
 
 
-def symbol_to_str(symbol: Symbol):
+def symbol_to_str(symbol: Symbol) -> str:
     string = ""
     stack = [symbol]
     while stack:
         current = stack.pop()
         if isinstance(current, Symbol):
-            string += current.name
+            if current.type == SymbolType.Function:
+                string += current.name
+            elif current.type == SymbolType.Number:
+                string += str(current.number)
+            elif current.type == SymbolType.String:
+                string += '{}current.string{}'.format('"', '"')
+            elif current.type == SymbolType.Infimum:
+                string += "#inf"
+            elif current.type == SymbolType.Supremum:
+                string += "#sup"
+            else:
+                assert False, "Unknown SymbolType: {}".format(current.type)
             if current.arguments:
                 stack.append(')')
-                stack.extend(reversed(current.arguments))
+                args = reversed(current.arguments)
+                for arg in args:
+                    stack.append(arg)
+                    stack.append(',')
+                stack.pop()
                 stack.append('(')
         elif isinstance(current, str):
             string += current

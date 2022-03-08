@@ -2,8 +2,9 @@ from copy import deepcopy
 
 import networkx as nx
 
-from util.explain import preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph, \
-    Literal
+from util.explain import preprocess, negation_atoms, _derivation_path, _dependency_assumption, explanation_graph
+from util.literal import Literal
+from util.run import explain
 
 """
 asp 1 0 0
@@ -104,8 +105,14 @@ def explanation_graph_test():
     nx.draw(graph)
 
 
+def explain_test():
+    graphs = explain("../logic_programs/expasp.lp", root=Literal.literal_from_string('f'))
+    assert graphs
+
+
 preprocess_test()
 negation_atoms_test()
 derivation_path_test()
 assumption_func_test()
 explanation_graph_test()
+explain_test()
