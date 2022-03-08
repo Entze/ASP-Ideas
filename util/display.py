@@ -8,9 +8,7 @@ def symbol_to_str(symbol: Symbol) -> str:
     while stack:
         current = stack.pop()
         if isinstance(current, Symbol):
-            if current.type == SymbolType.Function:
-                string += current.name
-            elif current.type == SymbolType.Number:
+            if current.type == SymbolType.Number:
                 string += str(current.number)
             elif current.type == SymbolType.String:
                 string += '{}current.string{}'.format('"', '"')
@@ -18,16 +16,18 @@ def symbol_to_str(symbol: Symbol) -> str:
                 string += "#inf"
             elif current.type == SymbolType.Supremum:
                 string += "#sup"
+            elif current.type == SymbolType.Function:
+                string += current.name
+                if current.arguments:
+                    stack.append(')')
+                    args = reversed(current.arguments)
+                    for arg in args:
+                        stack.append(arg)
+                        stack.append(',')
+                    stack.pop()
+                    stack.append('(')
             else:
                 assert False, "Unknown SymbolType: {}".format(current.type)
-            if current.arguments:
-                stack.append(')')
-                args = reversed(current.arguments)
-                for arg in args:
-                    stack.append(arg)
-                    stack.append(',')
-                stack.pop()
-                stack.append('(')
         elif isinstance(current, str):
             string += current
     return string

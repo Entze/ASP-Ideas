@@ -1,6 +1,7 @@
 import functools
 import os.path
 import subprocess
+import sys
 from pathlib import Path
 from typing import Union
 
@@ -11,17 +12,29 @@ from util.literal import Literal
 
 def file_to_aspif(path):
     p = Path(path)
-    output = subprocess.run(['gringo', p], stdout=subprocess.PIPE)
+    output = subprocess.run(['gringo', '--warn', 'none', p], stdout=subprocess.PIPE)
     return output.stdout.decode('utf-8')
 
 
 def program_str_to_aspif(program: str):
-    output = subprocess.run(['gringo'], input=program.encode('utf-8'), check=True, capture_output=True)
+    output = None
+    try:
+        output = subprocess.run(['gringo', '--warn', 'none'], input=program.encode('utf-8'), capture_output=True)
+        if output.returncode != 0:
+            raise Exception()
+
+    except (subprocess.CalledProcessError, Exception):
+        print(program, file=sys.stderr)
+        print()
+        if output is not None:
+            print(output.stdout, file=sys.stderr)
+            print(output.stderr, file=sys.stderr)
+        raise
     return output.stdout.decode('utf-8')
 
 
 def prepare_program(program: Union[str, Path]):
-    if isinstance(program, str) and os.path.isfile(program) or isinstance(program, Path):
+    if (isinstance(program, str) and os.path.isfile(program)) or isinstance(program, Path):
         statements = _prepare_program_file(program)
     else:
         statements = _prepare_program_str(program)
@@ -30,7 +43,7 @@ def prepare_program(program: Union[str, Path]):
 
 def _prepare_program_file(path):
     statements = []
-    clingo.ast.parse_files((path,), functools.partial(_prepare_statement, statements=statements))
+    clingo.ast.parse_files((str(path),), functools.partial(_prepare_statement, statements=statements))
     return statements
 
 
@@ -42,7 +55,12 @@ def _prepare_program_str(program):
 
 def _prepare_statement(statement: clingo.ast.AST, statements):
     if statement.ast_type != clingo.ast.ASTType.Rule:
-        statements.append(str(statement))
+        if statement.ast_type != clingo.ast.ASTType.Program:
+            statements.append(str(statement))
+        else:
+            loc, program, seq = statement.values()
+            if program != 'base':
+                statements.append(str(statement))
     else:
         loc, head, body = statement.values()
         if not body:

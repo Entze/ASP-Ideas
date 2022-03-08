@@ -15,22 +15,27 @@ from util.explain import preprocess, get_minimal_assumptions, negation_atoms, ex
 from util.literal import Literal
 
 
-def solve(programs, filter_symbols=None, nr_of_models: int = 0, report=True, sep=' '):
-    ctl = clingo.Control(["--models", str(nr_of_models)])
+def solve(programs, clingo_args=("--models", "0"), grounding_context=None, filter_symbols=None, report=True, sep=' '):
+    ctl = clingo.Control(clingo_args)
     if isinstance(programs, str):
         if os.path.isfile(programs):
             # program is a path
             ctl.load(programs)
         else:
             ctl.add("base", [], programs)
+    elif isinstance(programs, Path):
+        ctl.load(str(programs))
     elif isinstance(programs, Iterable):
         for program in programs:
-            if os.path.isfile(program):
-                ctl.load(program)
-            else:
-                ctl.add("base", [], program)
+            if isinstance(program, str):
+                if os.path.isfile(program):
+                    ctl.load(program)
+                else:
+                    ctl.add("base", [], program)
+            elif isinstance(program, Path):
+                ctl.load(str(program))
 
-    ctl.ground([("base", [])])
+    ctl.ground([("base", [])], context=grounding_context)
 
     with ctl.solve(yield_=True, async_=True) as solver:
 
@@ -137,12 +142,14 @@ def compare_symbols(filter_symbol, symbol: Symbol):
                    predicate_nr_of_args is None or predicate_nr_of_args == len(symbol.arguments))
 
 
-def explain(program: Union[Path, str],
+def explain(programs: Union[Path, str, Sequence[Path], Sequence[str]],
+            clingo_args=(),
+            grounding_context=None,
             answer_set: Sequence[Union[clingo.Symbol, Literal]] = None,
             cautious_consequence: Sequence[Union[clingo.Symbol, Literal]] = None,
             root=None) -> Sequence[Optional[nx.DiGraph]]:
     if answer_set is None:
-        answer_sets, _ = solve(program, report=False)
+        answer_sets, _ = solve(programs, clingo_args=clingo_args, grounding_context=grounding_context, report=False)
         if answer_sets:
             answer_set = deepcopy(answer_sets[0])
         else:
@@ -150,6 +157,7 @@ def explain(program: Union[Path, str],
         if cautious_consequence is None and answer_sets:
             cautious_consequence = deepcopy(answer_sets[0])
             cautious_consequence.intersection_update(*answer_sets)
+
     answer_set_literals = set()
     for symbol in answer_set:
         literal = Literal.to_literal(symbol)
@@ -157,7 +165,10 @@ def explain(program: Union[Path, str],
             root = literal
         answer_set_literals.add(literal)
 
-    prepared_program = prepare_program(program)
+    if isinstance(programs, Sequence) and not isinstance(programs, str):
+        prepared_program = '\n'.join(prepare_program(program) for program in programs)
+    else:
+        prepared_program = prepare_program(programs)
     aspif = program_str_to_aspif(prepared_program)
 
     program_dict, literal_dict = process_aspif(aspif)
