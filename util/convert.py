@@ -103,5 +103,5 @@ def _process_aspif_external(statement: list, program_dict: dict, literal_dict: d
     assert v == 2, "Unexpected language construct"
 
     if literal in literal_dict:
-       literal = literal_dict[literal]
+        literal = literal_dict[literal]
     program_dict[literal] = [dict(positive=[], negative=[])]

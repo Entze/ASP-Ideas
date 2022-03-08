@@ -1,8 +1,6 @@
+import networkx as nx
 from clingo import Symbol
 
-import networkx as nx
-
-import matplotlib.pyplot as plt
 
 def symbol_to_str(symbol: Symbol):
     string = ""
@@ -33,7 +31,6 @@ def display_explanation_graph(graph: nx.DiGraph, root=None):
     # nodes = nx.draw_networkx_nodes(graph, pos=pos)
     # es = graph.edges(data=True)
     # styles = [_edge_type_map.get(data['edge_type'], 'solid') for u, v, data in es]
-    #edges = nx.draw_networkx_edges(graph, pos=pos, style=styles)
-    #return p
+    # edges = nx.draw_networkx_edges(graph, pos=pos, style=styles)
+    # return p
     return nx.draw_networkx(graph, pos, with_labels=True)
-
