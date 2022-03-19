@@ -11,7 +11,7 @@ def symbol_to_str(symbol: Symbol) -> str:
             if current.type == SymbolType.Number:
                 string += str(current.number)
             elif current.type == SymbolType.String:
-                string += '{}current.string{}'.format('"', '"')
+                string += '{}{}{}'.format('"', current.string, '"')
             elif current.type == SymbolType.Infimum:
                 string += "#inf"
             elif current.type == SymbolType.Supremum:

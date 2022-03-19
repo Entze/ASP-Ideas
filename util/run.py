@@ -86,7 +86,7 @@ def solve(programs, clingo_args=("--models", "0"), grounding_context=None, filte
 
                     print(
                         "Answer {:2d}: {}{}{}{}.{}".format(model.number, "{" + sep,
-                                                           sep.join(sorted(map(symbol_to_str, answer_set))),
+                                                           sep.join(map(symbol_to_str, sorted(answer_set))),
                                                            sep + "}",
                                                            cost_out, time_out))
         result = solver.get()
