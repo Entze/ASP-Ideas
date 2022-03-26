@@ -12,14 +12,15 @@ from util.literal import Literal
 
 def file_to_aspif(path):
     p = Path(path)
-    output = subprocess.run(['gringo', '--warn', 'none', p], stdout=subprocess.PIPE)
+    output = subprocess.run(['gringo', '--keep-facts', '--warn', 'none', p], stdout=subprocess.PIPE)
     return output.stdout.decode('utf-8')
 
 
 def program_str_to_aspif(program: str):
     output = None
     try:
-        output = subprocess.run(['gringo', '--warn', 'none'], input=program.encode('utf-8'), capture_output=True)
+        output = subprocess.run(['gringo', '--keep-facts', '--warn', 'none'], input=program.encode('utf-8'),
+                                capture_output=True)
         if output.returncode != 0:
             raise Exception()
 
@@ -39,6 +40,48 @@ def prepare_program(program: Union[str, Path]):
     else:
         statements = _prepare_program_str(program)
     return '\n'.join(map(str, statements))
+
+
+def preground(program: Union[str, Path]):
+    if (isinstance(program, str) and os.path.isfile(program)) or isinstance(program, Path):
+        return _preground_file(program)
+    return _preground_str(program)
+
+
+def _preground_file(program: Union[str, Path]):
+    output = None
+    try:
+        output = subprocess.run(['gringo', '--text', '--keep-facts', '--warn', 'none', Path(program)],
+                                capture_output=True)
+        if output.returncode != 0:
+            raise Exception()
+
+    except (subprocess.CalledProcessError, Exception):
+        print(program, file=sys.stderr)
+        print()
+        if output is not None:
+            print(output.stdout, file=sys.stderr)
+            print(output.stderr, file=sys.stderr)
+        raise
+    return output.stdout.decode('utf-8')
+
+
+def _preground_str(program: str):
+    output = None
+    try:
+        output = subprocess.run(['gringo', '--text', '--keep-facts', '--warn', 'none'], input=program.encode('utf-8'),
+                                capture_output=True)
+        if output.returncode != 0:
+            raise Exception()
+
+    except (subprocess.CalledProcessError, Exception):
+        print(program, file=sys.stderr)
+        print()
+        if output is not None:
+            print(output.stdout, file=sys.stderr)
+            print(output.stderr, file=sys.stderr)
+        raise
+    return output.stdout.decode('utf-8')
 
 
 def _prepare_program_file(path):

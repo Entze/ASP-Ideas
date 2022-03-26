@@ -9,7 +9,7 @@ import clingo
 import networkx as nx
 from clingo import SymbolType, Symbol
 
-from util.convert import program_str_to_aspif, process_aspif, prepare_program
+from util.convert import program_str_to_aspif, process_aspif, prepare_program, preground
 from util.display import symbol_to_str
 from util.explain import preprocess, get_minimal_assumptions, negation_atoms, explanation_graph
 from util.literal import Literal
@@ -166,9 +166,11 @@ def explain(programs: Union[Path, str, Sequence[Path], Sequence[str]],
         answer_set_literals.add(literal)
 
     if isinstance(programs, Sequence) and not isinstance(programs, str):
-        prepared_program = '\n'.join(prepare_program(program) for program in programs)
+        pregrounded_program = '\n'.join(preground(program) for program in programs)
     else:
-        prepared_program = prepare_program(programs)
+        pregrounded_program = preground(programs)
+
+    prepared_program = prepare_program(pregrounded_program)
     aspif = program_str_to_aspif(prepared_program)
 
     program_dict, literal_dict = process_aspif(aspif)
