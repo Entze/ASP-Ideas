@@ -93,6 +93,7 @@ ForwardGoal = TypeVar('ForwardGoal', bound='Goal')
 class Goal:
     goal: Optional[Rule] = None
     parent: Optional[ForwardGoal] = None
+    children : Sequence[ForwardGoal] = field(default_factory=list)
     env: Dict[Variable, Term] = field(default_factory=dict)
     inx: int = 0
 
@@ -129,8 +130,10 @@ def unify(src_term: Term, src_env: Dict[Variable, Term], dest_term: Optional[Ter
 
 
 def search(term: Term, rules: Sequence[Rule] = ()):
+
     root = Goal(goal=Rule(head=Term(), body=(term,)))
     goal_envs = []
+    proof_trees = []
     stack = [root]
     while stack:
         current = stack.pop()
@@ -141,6 +144,7 @@ def search(term: Term, rules: Sequence[Rule] = ()):
                 else:
                     print("Yes")
                 goal_envs.append(current.env)
+                proof_trees.append(current)
             else:
                 parent = copy.deepcopy(current.parent)
                 unify(current.goal.head, current.env, parent.goal.body[parent.inx], parent.env)
@@ -153,10 +157,11 @@ def search(term: Term, rules: Sequence[Rule] = ()):
                 unifiable = unify(term, current.env, rule.head, child_env)
                 if unifiable:
                     child = Goal(env=child_env, parent=current, goal=rule)
+                    current.children.append(child)
                     stack.append(child)
     if not goal_envs:
         print("No")
-    return goal_envs
+    return goal_envs,proof_trees
 
 
 X = Term.new_variable('X')
