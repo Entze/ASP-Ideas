@@ -147,7 +147,7 @@ def search(term: Term, rules: Sequence[Rule] = ()):
                 proof_trees.append(current)
             else:
                 parent = copy.deepcopy(current.parent)
-                unify(current.goal.head, current.env, parent.goal.body[parent.inx], parent.env)
+                unify(current.goal.head, current.env, parent.rule.body[parent.inx], parent.env)
                 parent.inx += 1
                 stack.append(parent)
         else:

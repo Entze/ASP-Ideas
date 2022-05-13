@@ -8,6 +8,7 @@ dependencies:
   - clingo=5.5
   - python-clingox=1.0
   - clorm=1.3
+  - clingraph=1.0
   - networkx=2.7
   - pydot=1.4
   - jupyter=1.0
