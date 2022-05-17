@@ -6,9 +6,10 @@ channels:
 dependencies:
   - python>=3.6,<4
   - clingo=5.5
-  - python-clingox=1.0
+  - python-clingox=1.1
   - clorm=1.3
   - clingraph=1.0
+  - telingo=2.1
   - networkx=2.7
   - shapely=1.8
   - descartes=1.1
