@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Sequence, TypeVar, Union
+from typing import Sequence, TypeVar, Union, Optional
 
 import clingo
 import clingo.ast
 
-from starlingo.Atom import Atom
+from starlingo.Atom import Atom, ComparisonOperator
 from starlingo.Literal import Literal, ConditionalLiteral
-from starlingo.Symbol import Variable, Term, Symbol, ComparisonOperator
-from starlingo.util import open_join_close, typecheck
+from starlingo.Symbol import Variable, Term, Symbol
+from starlingo.util import typecheck
 
 ForwardExternal = TypeVar('ForwardExternal', bound='External')
 ForwardExternalType = TypeVar('ForwardExternalType', bound='ExternalType')
@@ -114,7 +114,7 @@ class Guard:
 @dataclass(frozen=True, order=True)
 class ChoiceRule(Rule):
     left_guard: Union[Guard, None] = None
-    head: Sequence[Literal] = ()
+    head: Sequence[ConditionalLiteral] = ()
     right_guard: Union[Guard, None] = None
     body: Sequence[Literal] = ()
 
@@ -126,7 +126,7 @@ class ChoiceRule(Rule):
         if self.right_guard is None:
             right_guard_str = ''
         else:
-            right_guard_str = "{} {}".format(self.left_guard.comparison, self.left_guard.term)
+            right_guard_str = " {} {}".format(self.right_guard.comparison, self.right_guard.term)
         if self.body:
             body_str = " :- {}.".format(Rule.body_str(self.body))
         else:
@@ -134,31 +134,34 @@ class ChoiceRule(Rule):
         return "{}{}{}{}{}{}".format(left_guard_str, '{', '; '.join(map(str, self.head)), '}', right_guard_str,
                                      body_str)
 
+    @staticmethod
+    def _get_guard(guard: Optional[clingo.ast.AST]) -> Guard:
+        if guard is not None:
+            typecheck(guard, clingo.ast.ASTType.AggregateGuard, 'ast_type')
+            term = guard.term
+            if term.ast_type is clingo.ast.ASTType.SymbolicTerm:
+                term = Symbol.from_ast(term)
+            elif term.ast_type is clingo.ast.ASTType.Variable:
+                term = Variable.from_ast(term)
+            else:
+                assert False, "Unknown clingo.ast.ASTType {} of clingo.ast.AST {}.".format(term.ast_type, term)
+            guard = Guard(ComparisonOperator(guard.comparison), term)
+        return guard
+
     @classmethod
     def from_ast(cls, choice: clingo.ast.AST) -> ForwardChoiceRule:
         typecheck(choice.head, clingo.ast.ASTType.Aggregate, 'ast_type')
         elements = tuple(Literal.from_ast(element) for element in choice.head.elements)
-        left_guard = choice.head.left_guard
-        if left_guard is not None:
-            left_guard = left_guard.term
-            if left_guard.ast_type is clingo.ast.ASTType.SymbolicTerm:
-                left_guard = Symbol.from_ast(left_guard)
-            elif left_guard.ast_type is clingo.ast.ASTType.Variable:
-                left_guard = Variable.from_ast(left_guard)
-        right_guard = choice.head.right_guard
-        if right_guard is not None:
-            right_guard = right_guard.term
-            if right_guard.ast_type is clingo.ast.ASTType.SymbolicTerm:
-                right_guard = Symbol.from_ast(right_guard)
-            elif right_guard.ast_type is clingo.ast.ASTType.Variable:
-                right_guard = Variable.from_ast(right_guard)
+
+        left_guard = ChoiceRule._get_guard(choice.head.left_guard)
+        right_guard = ChoiceRule._get_guard(choice.head.right_guard)
         body = tuple(Literal.from_ast(literal) for literal in choice.body)
         return ChoiceRule(left_guard, elements, right_guard, body)
 
 
 @dataclass(frozen=True, order=True)
 class DisjunctiveRule(Rule):
-    head: Sequence[Literal] = ()
+    head: Sequence[ConditionalLiteral] = ()
     body: Sequence[Literal] = ()
 
     def __str__(self):
@@ -171,6 +174,9 @@ class DisjunctiveRule(Rule):
     @classmethod
     def from_ast(cls, disjunctive_rule: clingo.ast.AST) -> ForwardDisjunctiveRule:
         typecheck(disjunctive_rule.head, clingo.ast.ASTType.Disjunction, 'ast_type')
+        elements = tuple(ConditionalLiteral.from_ast(cond_literal) for cond_literal in disjunctive_rule.head.elements)
+        body = tuple(Literal.from_ast(literal) for literal in disjunctive_rule.body)
+        return DisjunctiveRule(elements, body)
 
 
 class ExternalType(IntEnum):

@@ -9,6 +9,7 @@ import clingo.ast
 from starlingo.util import typecheck
 
 ForwardSymbol = TypeVar('ForwardSymbol', bound='Symbol')
+ForwardSubSymbol = TypeVar('ForwardSubSymbol', bound='SubSymbol')
 ForwardFunction = TypeVar('ForwardFunction', bound='Function')
 ForwardUnaryOperator = TypeVar('ForwardUnaryOperator', bound='UnaryOperator')
 ForwardBinaryOperator = TypeVar('ForwardBinaryOperator', bound='BinaryOperator')
@@ -50,19 +51,22 @@ class Symbol:
             assert False, "Unknown clingo.SymbolType {}.".format(symbol.type)
 
     @classmethod
-    def from_ast(cls, symbol: clingo.ast.AST):
+    def from_ast(cls, symbol: clingo.ast.AST) -> ForwardSymbol:
         if symbol.ast_type is clingo.ast.ASTType.Function:
             return Function.from_ast(symbol)
-        elif symbol.ast_type is clingo.ast.ASTType.Variable:
-            return Variable.from_ast(symbol)
-        elif symbol.ast_type is clingo.ast.ASTType.Comparison:
-            return Comparison.from_ast(symbol)
+        elif symbol.ast_type is clingo.ast.ASTType.UnaryOperation:
+            return UnaryOperation.from_ast(symbol)
+        elif symbol.ast_type in (
+                clingo.ast.ASTType.Variable, clingo.ast.ASTType.SymbolicTerm, clingo.ast.ASTType.BinaryOperation):
+            return SubSymbol.from_ast(symbol)
+        else:
+            assert False, "Unknown clingo.ast.ASTType {} of clingo.ast.AST {}.".format(symbol.ast_type, symbol)
 
 
 class SubSymbol(Symbol):
 
     @classmethod
-    def from_clingo_symbol(cls, symbol: clingo.Symbol) -> Symbol:
+    def from_clingo_symbol(cls, symbol: clingo.Symbol) -> ForwardSubSymbol:
         if symbol.type is clingo.SymbolType.Number:
             return Term(IntegerConstant(symbol.number))
         elif symbol.type is clingo.SymbolType.String:
@@ -74,6 +78,17 @@ class SubSymbol(Symbol):
             return f_symbol
         else:
             assert False, "Unknown clingo.SymbolType {}.".format(symbol.type)
+
+    @classmethod
+    def from_ast(cls, symbol: clingo.ast.AST):
+        if symbol.ast_type is clingo.ast.ASTType.Variable:
+            return Variable.from_ast(symbol)
+        elif symbol.ast_type is clingo.ast.ASTType.SymbolicTerm:
+            return Term.from_ast(symbol)
+        elif symbol.ast_type in (clingo.ast.ASTType.Function, clingo.ast.ASTType.UnaryOperation):
+            return Symbol.from_ast(symbol)
+        else:
+            assert False, "Unknown clingo.ast.ASTType {} of clingo.ast.AST {}.".format(symbol.ast_type, symbol)
 
 
 @dataclass(frozen=True, order=True)
@@ -116,6 +131,11 @@ class Term(SubSymbol):
     def __str__(self):
         return str(self.constant)
 
+    @classmethod
+    def from_ast(cls, term: clingo.ast.AST):
+        typecheck(term, clingo.ast.ASTType.SymbolicTerm, 'ast_type')
+        return SubSymbol.from_clingo_symbol(term.symbol)
+
 
 class UnaryOperator(IntEnum):
     Minus = clingo.ast.UnaryOperator.Minus.value
@@ -133,6 +153,7 @@ class UnaryOperation(Symbol):
             return "-{}".format(self.argument)
         else:
             assert False, "Unknown UnaryOperatorType {}.".format(self.operator)
+
 
 
 class BinaryOperator(IntEnum):
@@ -155,49 +176,6 @@ class BinaryOperation(SubSymbol):
 
         if self.operator is BinaryOperator.Plus:
             return "{}+{}".format(left_str, right_str)
-
-
-class ComparisonOperator(IntEnum):
-    Equal = clingo.ast.ComparisonOperator.Equal.value
-    GreaterEqual = clingo.ast.ComparisonOperator.GreaterEqual.value
-    GreaterThan = clingo.ast.ComparisonOperator.GreaterThan.value
-    LessEqual = clingo.ast.ComparisonOperator.LessEqual.value
-    LessThan = clingo.ast.ComparisonOperator.LessThan.value
-    NotEqual = clingo.ast.ComparisonOperator.NotEqual.value
-
-    def __str__(self):
-        if self is ComparisonOperator.Equal:
-            op = '='
-        elif self is ComparisonOperator.GreaterEqual:
-            op = '>='
-        elif self is ComparisonOperator.GreaterThan:
-            op = '>'
-        elif self is ComparisonOperator.LessEqual:
-            op = '<='
-        elif self is ComparisonOperator.LessThan:
-            op = '<'
-        else:
-            assert self is ComparisonOperator.NotEqual, "Unknown ComparisonOperator {}".format(self)
-            op = '!='
-        return op
-
-
-@dataclass(frozen=True, order=True)
-class Comparison(Symbol):
-    left: SubSymbol = field(default_factory=Term)
-    operator: ComparisonOperator = field(default=ComparisonOperator.Equal)
-    right: SubSymbol = field(default_factory=Term)
-
-    def __str__(self):
-        return "{}{}{}".format(self.left, self.operator, self.right)
-
-    @classmethod
-    def from_ast(cls, comparison: clingo.ast.AST):
-        typecheck(comparison, clingo.ast.ASTType.Comparison, 'ast_type')
-        left = SubSymbol.from_ast(comparison.left)
-        operator = ComparisonOperator(comparison.operator)
-        right = SubSymbol.from_ast(comparison.right)
-        return Comparison(left, operator, right)
 
 
 @dataclass(frozen=True, order=True)

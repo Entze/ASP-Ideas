@@ -5,8 +5,7 @@ from typing import TypeVar, Sequence
 
 import clingo.ast
 
-from starlingo.Atom import Atom
-from starlingo.Symbol import Symbol
+from starlingo.Atom import Atom, Comparison
 from starlingo.util import typecheck
 
 ForwardLiteral = TypeVar('ForwardLiteral', bound='Literal')
@@ -63,14 +62,19 @@ class BasicLiteral(Literal):
     def from_ast(cls, literal: clingo.ast.AST) -> ForwardBasicLiteral:
         typecheck(literal, clingo.ast.ASTType.Literal, 'ast_type')
         sign = literal.sign
-        atom = Atom.from_ast(literal.atom)
+        if literal.atom.ast_type is clingo.ast.ASTType.SymbolicAtom:
+            atom = Atom.from_ast(literal.atom)
+        elif literal.atom.ast_type is clingo.ast.ASTType.Comparison:
+            atom = Comparison.from_ast(literal.atom)
+        else:
+            assert False, "Unknown clingo.ast.ASTType {} of clingo.ast.AST {}.".format(literal.atom.ast_type, literal)
         return BasicLiteral(sign=Sign(sign), atom=atom)
 
 
 @dataclass(frozen=True, order=True)
 class ConditionalLiteral(Literal):
     literal: BasicLiteral = field(default_factory=BasicLiteral)
-    condition: Sequence[Symbol] = ()
+    condition: Sequence[Literal] = ()
 
     def is_pos(self) -> bool:
         return True
@@ -88,5 +92,5 @@ class ConditionalLiteral(Literal):
     def from_ast(cls, conditional_literal: clingo.ast.AST) -> ForwardConditionalLiteral:
         typecheck(conditional_literal, clingo.ast.ASTType.ConditionalLiteral, 'ast_type')
         basic_literal = BasicLiteral.from_ast(conditional_literal.literal)
-        condition = tuple(Symbol.from_ast(cond) for cond in conditional_literal.condition)
+        condition = tuple(Literal.from_ast(cond) for cond in conditional_literal.condition)
         return ConditionalLiteral(basic_literal, condition)
