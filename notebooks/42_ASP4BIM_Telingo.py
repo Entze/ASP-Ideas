@@ -103,7 +103,7 @@ class SpatialTransformer(clingo.ast.Transformer):
         new_body = []
         for literal in rule.body:
             new_literal = literal
-            if literal.atom.ast_type == clingo.ast.ASTType.TheoryAtom:
+            if literal.a.ast_type == clingo.ast.ASTType.TheoryAtom:
                 new_literal = self.visit(literal, 'body')
             new_body.append(new_literal)
         return clingo.ast.Rule(rule.location, new_head, new_body)
@@ -123,7 +123,7 @@ class SpatialTelingoTransformer(clingo.ast.Transformer):
         new_body = []
         for literal in rule.body:
             new_literal = literal
-            if literal.atom.ast_type == clingo.ast.ASTType.TheoryAtom:
+            if literal.a.ast_type == clingo.ast.ASTType.TheoryAtom:
                 new_literal = self.visit(literal, tf)
             new_body.append(new_literal)
         return clingo.ast.Rule(rule.location, new_head, new_body)

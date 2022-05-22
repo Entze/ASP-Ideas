@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Sequence, MutableSequence, Optional
+from typing import Sequence, MutableSequence, Optional, Iterator
 
 import clingo.ast
 
+from starlingo.Atom import Atom
 from starlingo.Rule import RuleLike, Rule, External
 from starlingo.Symbol import Function
 from starlingo.util import open_join_close
@@ -54,8 +55,37 @@ class _FromASTTransformer(clingo.ast.Transformer):
         return external
 
 
-def from_ast(program: str) -> Sequence[Program]:
+def from_string(program: str) -> Sequence[Program]:
     t = _FromASTTransformer()
     clingo.ast.parse_string(program, t.visit)
     t.flush()
     return t.programs
+
+
+def evaluate_forwards(programs: Sequence[Program],
+                      ctl: Optional[clingo.Control] = None,
+                      parts=(('base', ()),),
+                      report=False,
+                      report_models=True,
+                      report_result=True) -> Iterator[Sequence[Atom]]:
+    if ctl is None:
+        ctl = clingo.Control()
+        ctl.configuration.solve.models = 0
+    ctl.add('base', [], '\n'.join(map(lambda p: p.custom_str(sep='\n'), programs)))
+    ctl.ground(parts)
+    with ctl.solve(yield_=True) as solve_handle:
+        models = 0
+        for model in solve_handle:
+            symbols = sorted(model.symbols(shown=True))
+            if report and report_models:
+                print("Answer {}:".format(model.number), end=' ')
+                print("{",
+                      '\n'.join(map(str, symbols)), "}", sep='\n')
+            atoms = tuple(Atom.from_clingo_symbol(symbol) for symbol in symbols)
+            models += 1
+            yield atoms
+        if report and report_result:
+            solve_result = solve_handle.get()
+            print(solve_result, end='')
+            if solve_result.satisfiable:
+                print(" {}{}".format(models, '' if solve_result.exhausted else '+'))

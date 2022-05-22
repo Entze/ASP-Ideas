@@ -36,6 +36,31 @@ class RuleLike:
 
 class Rule(RuleLike):
 
+    def is_fact(self):
+        if isinstance(self, Fact):
+            return True
+        elif self.is_normal_rule():
+            assert isinstance(self, NormalRule) or isinstance(self, DisjunctiveRule)
+            return not self.body
+        else:
+            return False
+
+    def as_fact(self):
+        if isinstance(self.head, Sequence):
+            head = self.head[0]
+        else:
+            head = self.head
+        return Fact(head)
+
+    def is_normal_rule(self):
+        if isinstance(self, NormalRule):
+            return True
+        if self.is_fact():
+            return True
+        elif isinstance(self, DisjunctiveRule):
+            return len(self.head) == 1
+        return False
+
     @classmethod
     def from_ast(cls, rule: clingo.ast.AST) -> ForwardRule:
         typecheck(rule, clingo.ast.ASTType.Rule, 'ast_type')
