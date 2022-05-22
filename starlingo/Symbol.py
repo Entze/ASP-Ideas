@@ -154,6 +154,14 @@ class UnaryOperation(Symbol):
         else:
             assert False, "Unknown UnaryOperatorType {}.".format(self.operator)
 
+    @classmethod
+    def from_ast(cls, unary_operation: clingo.ast.AST) -> ForwardSymbol:
+        typecheck(unary_operation, clingo.ast.ASTType.UnaryOperation, 'ast_type')
+        op = UnaryOperator(unary_operation.operator_type)
+        argument = SubSymbol.from_ast(unary_operation.argument)
+        return UnaryOperation(op, argument)
+
+
 
 
 class BinaryOperator(IntEnum):
