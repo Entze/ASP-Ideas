@@ -37,7 +37,7 @@ class _FromASTTransformer(clingo.ast.Transformer):
         if self.name is not None:
             self.programs.append(Program(self.name, self.parameters, self.program_rules))
         self.name = name
-        self.parameters = tuple(Function.from_ast(parameter) for parameter in parameters)
+        self.parameters = tuple(Function(parameter.name) for parameter in parameters)
         self.program_rules = []
 
     def visit_Program(self, program: clingo.ast.AST) -> clingo.ast.AST:
@@ -71,7 +71,7 @@ def evaluate_forwards(programs: Sequence[Program],
     if ctl is None:
         ctl = clingo.Control()
         ctl.configuration.solve.models = 0
-    ctl.add('base', [], '\n'.join(map(lambda p: p.custom_str(sep='\n'), programs)))
+    ctl.add('base', [], '\n\n'.join(map(str, programs)))
     ctl.ground(parts)
     with ctl.solve(yield_=True) as solve_handle:
         models = 0

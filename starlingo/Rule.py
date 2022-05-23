@@ -61,6 +61,14 @@ class Rule(RuleLike):
             return len(self.head) == 1
         return False
 
+    def is_disjunctive_rule(self):
+        return isinstance(self, DisjunctiveRule)
+
+    def is_constraint(self):
+        if isinstance(self, Constraint):
+            return True
+        return False
+
     @classmethod
     def from_ast(cls, rule: clingo.ast.AST) -> ForwardRule:
         typecheck(rule, clingo.ast.ASTType.Rule, 'ast_type')
@@ -75,11 +83,17 @@ class Rule(RuleLike):
             return ChoiceRule.from_ast(rule)
         elif rule.head.ast_type is clingo.ast.ASTType.Disjunction:
             return DisjunctiveRule.from_ast(rule)
+        else:
+            assert False, "Unknown Rule Type {}.".format(rule)
 
 
 @dataclass(frozen=True, order=True)
 class Fact(Rule):
     head: Literal = field(default_factory=Literal)
+
+    @property
+    def body(self) -> Sequence[Literal]:
+        return ()
 
     def __str__(self) -> str:
         return "{}.".format(self.head)

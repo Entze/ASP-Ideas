@@ -85,6 +85,8 @@ class SubSymbol(Symbol):
             return Variable.from_ast(symbol)
         elif symbol.ast_type is clingo.ast.ASTType.SymbolicTerm:
             return Term.from_ast(symbol)
+        elif symbol.ast_type is clingo.ast.ASTType.BinaryOperation:
+            return BinaryOperation.from_ast(symbol)
         elif symbol.ast_type in (clingo.ast.ASTType.Function, clingo.ast.ASTType.UnaryOperation):
             return Symbol.from_ast(symbol)
         else:
@@ -154,6 +156,10 @@ class UnaryOperation(Symbol):
         else:
             assert False, "Unknown UnaryOperatorType {}.".format(self.operator)
 
+    def arguments_append(self, __object) -> ForwardUnaryOperator:
+        argument = self.argument.arguments_append(__object)
+        return UnaryOperation(self.operator, argument)
+
     @classmethod
     def from_ast(cls, unary_operation: clingo.ast.AST) -> ForwardSymbol:
         typecheck(unary_operation, clingo.ast.ASTType.UnaryOperation, 'ast_type')
@@ -162,10 +168,17 @@ class UnaryOperation(Symbol):
         return UnaryOperation(op, argument)
 
 
-
-
 class BinaryOperator(IntEnum):
     Plus = clingo.ast.BinaryOperator.Plus.value
+    Minus = clingo.ast.BinaryOperator.Minus.value
+
+    def __str__(self):
+        if self is BinaryOperator.Plus:
+            return '+'
+        elif self is BinaryOperator.Minus:
+            return '-'
+        else:
+            assert False, "Unknown BinaryOperator {}: {}.".format(self.name, self.value)
 
 
 @dataclass(frozen=True, order=True)
@@ -182,8 +195,15 @@ class BinaryOperation(SubSymbol):
         if self.right.is_operation():
             right_str = '({})'.format(right_str)
 
-        if self.operator is BinaryOperator.Plus:
-            return "{}+{}".format(left_str, right_str)
+        return "{}{}{}".format(left_str, self.operator, right_str)
+
+    @classmethod
+    def from_ast(cls, bin_op: clingo.ast.AST):
+        typecheck(bin_op, clingo.ast.ASTType.BinaryOperation, 'ast_type')
+        left = SubSymbol.from_ast(bin_op.left)
+        operator = BinaryOperator(bin_op.operator_type)
+        right = SubSymbol.from_ast(bin_op.right)
+        return BinaryOperation(left, operator, right)
 
 
 @dataclass(frozen=True, order=True)
@@ -196,11 +216,11 @@ class Function(Symbol):
         return len(self.arguments)
 
     def __str__(self):
-        if self.name is None and not self.arguments:
+        if (self.name is None or self.name == '') and not self.arguments:
             return "()"
-        elif self.name is not None and not self.arguments:
+        elif (self.name is not None or self.name != '') and not self.arguments:
             return self.name
-        elif self.name is None and self.arguments:
+        elif (self.name is None or self.name == '') and self.arguments:
             return "({})".format(','.join(map(str, self.arguments)))
         else:
             return "{}({})".format(self.name, ','.join(map(str, self.arguments)))
@@ -210,6 +230,11 @@ class Function(Symbol):
 
     def match_signature(self, other: ForwardFunction) -> bool:
         return self.match(other.name, other.arity)
+
+    def arguments_append(self, __object) -> ForwardFunction:
+        arguments = list(self.arguments)
+        arguments.append(__object)
+        return Function(self.name, arguments)
 
     @classmethod
     def from_ast(cls, fun: clingo.ast.AST):

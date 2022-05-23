@@ -14,8 +14,9 @@ ForwardConditionalLiteral = TypeVar('ForwardConditionalLiteral', bound='Conditio
 
 
 class Sign(IntEnum):
-    NoSign = 0
-    DefaultNeg = 1
+    NoSign = clingo.ast.Sign.NoSign
+    Negation = clingo.ast.Sign.Negation
+    DoubleNegation = clingo.ast.Sign.DoubleNegation
 
 
 class Literal:
@@ -39,13 +40,20 @@ class BasicLiteral(Literal):
     sign: Sign = Sign.NoSign
 
     def is_neg(self) -> bool:
-        return self.sign is Sign.DefaultNeg
+        return self.sign is Sign.Negation
 
     def is_pos(self) -> bool:
         return self.sign is Sign.NoSign
 
+    def strong_neg_to_default_neg(self) -> ForwardBasicLiteral:
+        if self.atom.symbol.is_unary_operation():
+            atom = Atom(self.atom.symbol.argument)
+            return BasicLiteral(sign=Sign((self.sign ^ 1) % 2), atom=atom).strong_neg_to_default_neg()
+        return self
+
+
     def __str__(self):
-        if self.sign is Sign.DefaultNeg:
+        if self.sign is Sign.Negation:
             return "not {}".format(self.atom)
         return str(self.atom)
 
@@ -53,10 +61,10 @@ class BasicLiteral(Literal):
         return BasicLiteral(sign=Sign.NoSign, atom=copy.deepcopy(self.atom))
 
     def __neg__(self):
-        return BasicLiteral(sign=Sign(self.sign ^ 1), atom=self.atom)
+        return BasicLiteral(sign=Sign((self.sign ^ 1) % 2), atom=self.atom)
 
     def __invert__(self):
-        return BasicLiteral(sign=Sign(self.sign ^ 1), atom=self.atom)
+        return BasicLiteral(sign=Sign((self.sign ^ 1) % 2), atom=self.atom)
 
     @classmethod
     def from_ast(cls, literal: clingo.ast.AST) -> ForwardBasicLiteral:
