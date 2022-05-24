@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Sequence, MutableSequence, Optional, Iterator
 
 import clingo.ast
+import clingox.program
 
 from starlingo.Atom import Atom
 from starlingo.Rule import RuleLike, Rule, External
@@ -89,3 +90,16 @@ def evaluate_forwards(programs: Sequence[Program],
             print(solve_result, end='')
             if solve_result.satisfiable:
                 print(" {}{}".format(models, '' if solve_result.exhausted else '+'))
+
+
+def ground(programs: Sequence[Program],
+           ctl: Optional[clingo.Control] = None,
+           parts=(('base', ()),)):
+    if ctl is None:
+        ctl = clingo.Control()
+    prg = clingox.program.Program()
+    obs = clingox.program.ProgramObserver(prg)
+    ctl.register_observer(obs)
+    ctl.add('base', [], '\n\n'.join(map(str, programs)))
+    ctl.ground(parts)
+    return prg

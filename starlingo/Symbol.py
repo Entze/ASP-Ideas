@@ -138,6 +138,15 @@ class Term(SubSymbol):
         typecheck(term, clingo.ast.ASTType.SymbolicTerm, 'ast_type')
         return SubSymbol.from_clingo_symbol(term.symbol)
 
+    @staticmethod
+    def zero():
+        return Term(IntegerConstant(0))
+
+    @staticmethod
+    def one():
+        return Term(IntegerConstant(1))
+
+
 
 class UnaryOperator(IntEnum):
     Minus = clingo.ast.UnaryOperator.Minus.value
