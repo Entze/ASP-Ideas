@@ -1,11 +1,11 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TypeVar
+from typing import TypeVar, Sequence, Optional
 
 import clingo
 import clingo.ast
 
-from starlingo.Symbol import Symbol, Function, Term, SubSymbol
+from starlingo.Symbol import Symbol, Function, Term, SubSymbol, Variable
 from starlingo.util import typecheck
 
 ForwardAtom = TypeVar('ForwardAtom', bound='Atom')
@@ -17,6 +17,18 @@ class Atom:
 
     def __str__(self) -> str:
         return str(self.symbol)
+
+    def is_ground(self) -> bool:
+        return self.symbol.is_ground()
+
+    def get_variables(self) -> Sequence[Variable]:
+        return self.symbol.get_variables()
+
+    def rename(self, name: Optional[str]) -> ForwardAtom:
+        return Atom(self.symbol.rename(name))
+
+    def name_prepend(self, prefix: str) -> ForwardAtom:
+        return Atom(self.symbol.name_prepend(prefix))
 
     @staticmethod
     def from_clingo_symbol(symbol: clingo.Symbol) -> ForwardAtom:

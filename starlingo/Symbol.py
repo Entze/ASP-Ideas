@@ -8,9 +8,11 @@ import clingo.ast
 
 from starlingo.util import typecheck
 
+ForwardVariable = TypeVar('ForwardVariable', bound='Variable')
 ForwardSymbol = TypeVar('ForwardSymbol', bound='Symbol')
 ForwardSubSymbol = TypeVar('ForwardSubSymbol', bound='SubSymbol')
 ForwardFunction = TypeVar('ForwardFunction', bound='Function')
+ForwardUnaryOperation = TypeVar('ForwardUnaryOperation', bound='UnaryOperation')
 ForwardUnaryOperator = TypeVar('ForwardUnaryOperator', bound='UnaryOperator')
 ForwardBinaryOperator = TypeVar('ForwardBinaryOperator', bound='BinaryOperator')
 
@@ -40,6 +42,18 @@ class Symbol:
 
     def is_term(self) -> bool:
         return isinstance(self, Term)
+
+    def is_ground(self) -> bool:
+        return NotImplemented
+
+    def get_variables(self) -> Sequence[ForwardVariable]:
+        return NotImplemented
+
+    def rename(self, name: Optional[str]) -> ForwardSymbol:
+        return copy.deepcopy(self)
+
+    def name_prepend(self, prefix: str) -> ForwardSymbol:
+        return copy.deepcopy(self)
 
     @classmethod
     def from_clingo_symbol(cls, symbol: clingo.Symbol) -> ForwardSymbol:
@@ -100,6 +114,12 @@ class Variable(SubSymbol):
     def __str__(self):
         return self.name
 
+    def is_ground(self) -> bool:
+        return False
+
+    def get_variables(self) -> Sequence[ForwardVariable]:
+        return (self,)
+
     @classmethod
     def from_ast(cls, variable: clingo.ast.AST):
         typecheck(variable, clingo.ast.ASTType.Variable, 'ast_type')
@@ -133,6 +153,12 @@ class Term(SubSymbol):
     def __str__(self):
         return str(self.constant)
 
+    def is_ground(self) -> bool:
+        return True
+
+    def get_variables(self) -> Sequence[Variable]:
+        return ()
+
     @classmethod
     def from_ast(cls, term: clingo.ast.AST):
         typecheck(term, clingo.ast.ASTType.SymbolicTerm, 'ast_type')
@@ -145,7 +171,6 @@ class Term(SubSymbol):
     @staticmethod
     def one():
         return Term(IntegerConstant(1))
-
 
 
 class UnaryOperator(IntEnum):
@@ -165,9 +190,21 @@ class UnaryOperation(Symbol):
         else:
             assert False, "Unknown UnaryOperatorType {}.".format(self.operator)
 
-    def arguments_append(self, __object) -> ForwardUnaryOperator:
+    def arguments_append(self, __object) -> ForwardUnaryOperation:
         argument = self.argument.arguments_append(__object)
         return UnaryOperation(self.operator, argument)
+
+    def is_ground(self) -> bool:
+        return self.argument.is_ground()
+
+    def get_variables(self) -> Sequence[Variable]:
+        return self.argument.get_variables()
+
+    def rename(self, name: Optional[str]) -> ForwardUnaryOperation:
+        return UnaryOperation(self.operator, self.argument.rename(name))
+
+    def name_prepend(self, prefix: str) -> ForwardUnaryOperation:
+        return UnaryOperation(self.operator, self.argument.name_prepend(prefix))
 
     @classmethod
     def from_ast(cls, unary_operation: clingo.ast.AST) -> ForwardSymbol:
@@ -206,6 +243,14 @@ class BinaryOperation(SubSymbol):
 
         return "{}{}{}".format(left_str, self.operator, right_str)
 
+    def is_ground(self) -> bool:
+        return self.left.is_ground() and self.right.is_ground()
+
+    def get_variables(self) -> Sequence[Variable]:
+        left_vars = self.left.get_variables()
+        right_vars = self.right.get_variables()
+        return (*left_vars, *right_vars)
+
     @classmethod
     def from_ast(cls, bin_op: clingo.ast.AST):
         typecheck(bin_op, clingo.ast.ASTType.BinaryOperation, 'ast_type')
@@ -223,6 +268,15 @@ class Function(Symbol):
     @property
     def arity(self) -> int:
         return len(self.arguments)
+
+    def is_ground(self) -> bool:
+        return all(argument.is_ground() for argument in self.arguments)
+
+    def get_variables(self) -> Sequence[Variable]:
+        variables = set()
+        for argument in self.arguments:
+            variables.update(argument.get_variables())
+        return tuple(variables)
 
     def __str__(self):
         if (self.name is None or self.name == '') and not self.arguments:
@@ -244,6 +298,12 @@ class Function(Symbol):
         arguments = list(self.arguments)
         arguments.append(__object)
         return Function(self.name, arguments)
+
+    def rename(self, name: Optional[str]) -> ForwardFunction:
+        return Function(name, copy.deepcopy(self.arguments))
+
+    def name_prepend(self, prefix: str) -> ForwardFunction:
+        return Function(prefix + self.name, copy.deepcopy(self.arguments))
 
     @classmethod
     def from_ast(cls, fun: clingo.ast.AST):

@@ -69,6 +69,20 @@ class Rule(RuleLike):
             return True
         return False
 
+    def is_ground(self):
+        if hasattr(self, 'head'):
+            if isinstance(self.head, Sequence):
+                for literal in self.head:
+                    if not literal.is_ground():
+                        return False
+            else:
+                if not self.head.is_ground():
+                    return False
+        for literal in self.body:
+            if not literal.is_ground():
+                return False
+        return True
+
     @classmethod
     def from_ast(cls, rule: clingo.ast.AST) -> ForwardRule:
         typecheck(rule, clingo.ast.ASTType.Rule, 'ast_type')

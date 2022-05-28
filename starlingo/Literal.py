@@ -6,6 +6,7 @@ from typing import TypeVar, Sequence
 import clingo.ast
 
 from starlingo.Atom import Atom, Comparison
+from starlingo.Symbol import Variable
 from starlingo.util import typecheck
 
 ForwardLiteral = TypeVar('ForwardLiteral', bound='Literal')
@@ -24,6 +25,12 @@ class Literal:
         return NotImplemented
 
     def is_pos(self) -> bool:
+        return NotImplemented
+
+    def is_ground(self) -> bool:
+        return NotImplemented
+
+    def get_variables(self) -> Sequence[Variable]:
         return NotImplemented
 
     @classmethod
@@ -51,6 +58,11 @@ class BasicLiteral(Literal):
             return BasicLiteral(sign=Sign((self.sign ^ 1) % 2), atom=atom).strong_neg_to_default_neg()
         return self
 
+    def is_ground(self) -> bool:
+        return self.atom.is_ground()
+
+    def get_variables(self) -> Sequence[Variable]:
+        return self.atom.get_variables()
 
     def __str__(self):
         if self.sign is Sign.Negation:
@@ -89,6 +101,12 @@ class ConditionalLiteral(Literal):
 
     def is_neg(self) -> bool:
         return False
+
+    def is_ground(self) -> bool:
+        return False
+
+    def get_variables(self) -> Sequence[Variable]:
+        return self.literal.get_variables()
 
     def __str__(self):
         if self.condition:
