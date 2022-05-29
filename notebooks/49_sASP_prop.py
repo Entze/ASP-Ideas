@@ -175,7 +175,6 @@ class _BaseNode:
     parent: Optional[_ForwardBaseNode]
     children: MutableSequence[_ForwardBaseNode]
     index: int
-    inductive: bool
 
     @property
     def is_expanded(self):
@@ -213,7 +212,6 @@ class Node(_BaseNode):
     parent: Optional[_BaseNode] = field(default=None)
     children: Optional[MutableSequence[_BaseNode]] = field(default=None)
     index: int = field(default=0)
-    inductive: bool = field(default=False)
 
 
 ForwardAndNode = TypeVar('ForwardAndNode', bound='AndNode')
@@ -256,12 +254,9 @@ class OrNode(Node):
             return None
         if any(-body_literal in self.hypotheses for body_literal in rule.body):
             return None
-        if not self.inductive and rule.body:
-            if all(body_literal.is_pos and body_literal in self.hypotheses for body_literal in rule.body):
-                return None
         hypotheses = deepcopy(self.hypotheses)
         hypotheses.add(self.subject)
-        child = AndNode(subject=rule, hypotheses=hypotheses, parent=self, inductive=self.inductive or not rule.body)
+        child = AndNode(subject=rule, hypotheses=hypotheses, parent=self)
         self.children.append(child)
         return child
 
@@ -271,8 +266,7 @@ class OrNode(Node):
                          hypotheses=hypotheses,
                          parent=self.parent.parent,
                          children=self.parent.children,
-                         index=self.parent.index + 1,
-                         inductive=self.inductive)
+                         index=self.parent.index + 1)
         self.parent = parent
         return parent
 
@@ -302,8 +296,6 @@ class AndNode(Node):
     def expand(self, rules: Sequence[Rule]) -> Optional[OrNode]:
         if not self.is_expanded:
             self.children = []
-        if not self.subject.body:
-            self.inductive = True
         if self.is_exhausted(rules):
             return None
         body_literal = self.subject.body[self.index]
@@ -312,8 +304,8 @@ class AndNode(Node):
         hypotheses = deepcopy(self.hypotheses)
         child = OrNode(subject=body_literal,
                        hypotheses=hypotheses,
-                       parent=self,
-                       inductive=self.inductive or body_literal.is_neg)
+                       parent=self)
+
         self.children.append(child)
         return child
 
@@ -323,8 +315,7 @@ class AndNode(Node):
                         hypotheses=hypotheses,
                         parent=self.parent.parent,
                         children=self.parent.children,
-                        index=self.parent.index + 1,
-                        inductive=self.inductive)
+                        index=self.parent.index + 1)
         self.parent = parent
         return parent
 
@@ -350,6 +341,20 @@ class Program:
     def sASP(self):
         sasp_rules = list(self.rules)
         sasp_rules.extend(self.dual_of(tuple(self.non_constraint_rules)).rules)
+
+        dual_facts = []
+        considered = set()
+        for rule in sasp_rules:
+            for body_literal in rule.body:
+                l = abs(body_literal)
+                if l in considered:
+                    continue
+                if l not in self.reachable:
+                    dual_facts.append(NormalRule(-abs(body_literal)))
+                    considered.add(l)
+
+        sasp_rules.extend(dual_facts)
+
 
         chk_rules = []
         nmr_chk_head = BasicLiteral(atom=Atom(Function("__nmr_chk")))
@@ -572,6 +577,8 @@ print(d3.fmt('\n'))
 print('-' * 10)
 s3 = p3.sASP
 print(s3.fmt('\n'))
+print('#' * 3, '#' * 3)
+solve(p3)
 print('#' * 3, a, '#' * 3)
 solve(p3, a)
 print('#' * 3, b, '#' * 3)
@@ -601,6 +608,8 @@ print('-' * 10)
 s4 = p4.sASP
 print(s4.fmt('\n'))
 
+print('#' * 3, '#' * 3)
+solve(p4)
 print('#' * 3, b, '#' * 3)
 solve(p4, b)
 print('#' * 3, e, '#' * 3)
@@ -615,6 +624,8 @@ print('#' * 3, k, '#' * 3)
 solve(p4, k)
 print('#' * 3, b, e, f, '#' * 3)
 solve(p4, b, e, f)
+print('#' * 3, a, c, '#' * 3)
+solve(p4, a, c)
 print('#' * 3, a, c, e, k, '#' * 3)
 solve(p4, a, c, e, k)
 
@@ -632,6 +643,21 @@ print(d5.fmt('\n'))
 print('-' * 10)
 s5 = p5.sASP
 print(s5.fmt('\n'))
+# %%
+print('#' * 3, '#' * 3)
+solve(p5)
+print('#' * 3, p, '#' * 3)
+solve(p5, p)
+print('#' * 3, q, '#' * 3)
+solve(p5, q)
+print('#' * 3, r, '#' * 3)
+solve(p5, r)
+print('#' * 3, a, '#' * 3)
+solve(p5,  a)
+print('#' * 3, b, '#' * 3)
+solve(p5,  b)
+print('#' * 3, c, '#' * 3)
+solve(p5, c)
 
 # %%
 p6 = Program(rules=(
@@ -645,6 +671,15 @@ print(d6.fmt('\n'))
 print('-' * 10)
 s6 = p6.sASP
 print(s6.fmt('\n'))
+print('#' * 3, '#' * 3)
+solve(p6)
+print('#' * 3, a, '#' * 3)
+solve(p6,  a)
+print('#' * 3, b, '#' * 3)
+solve(p6,  b)
+print('#' * 3,a, b, '#' * 3)
+solve(p6, a, b)
+
 # %%
 p7 = Program(rules=(
     NormalRule(a, (-b,)),
@@ -658,6 +693,20 @@ print(d7.fmt('\n'))
 print('-' * 10)
 s7 = p7.sASP
 print(s7.fmt('\n'))
+print('#' * 3, a, '#' * 3)
+solve(p7,  a)
+print('#' * 3, b, '#' * 3)
+solve(p7,  b)
+print('#' * 3, c, '#' * 3)
+solve(p7,  c)
+print('#' * 3, a, b, '#' * 3)
+solve(p7,  a, b)
+print('#' * 3, a, c, '#' * 3)
+solve(p7,  a, c)
+print('#' * 3, b, c, '#' * 3)
+solve(p7,  b, c)
+print('#' * 3, a, b, c, '#' * 3)
+solve(p7, a, b, c)
 
 p8 = Program(rules=(
     NormalRule(a, (b,)),
@@ -665,8 +714,29 @@ p8 = Program(rules=(
 ))
 s8 = p8.sASP
 print(s8.fmt('\n'))
-print(' '.join(map(str, p8.constraint_rules)))
-print(' '.join(map(str, p8.non_constraint_rules)))
+print('#' * 3, '#' * 3)
+solve(p8)
+print('#' * 3, a, '#' * 3)
 solve(p8, a)
+print('#' * 3, b, '#' * 3)
 solve(p8, b)
+print('#' * 3, a,b, '#' * 3)
 solve(p8, a, b)
+
+p9 = Program(rules=(
+    NormalRule(a, (b,)),
+    NormalRule(b, (a,)),
+    NormalRule(c, ()),
+))
+s9 = p9.sASP
+print(s9.fmt('\n'))
+print('#' * 3, '#' * 3)
+solve(p9)
+print('#' * 3, a, '#' * 3)
+solve(p9, a)
+print('#' * 3, b, '#' * 3)
+solve(p9, b)
+print('#' * 3, a, b, '#' * 3)
+solve(p9, a, b)
+print('#' * 3, c, a, b, '#' * 3)
+solve(p9, c, a, b)
