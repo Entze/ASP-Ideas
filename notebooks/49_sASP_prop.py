@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import cached_property
-from typing import Optional, Sequence, Iterator, Dict, Set, TypeVar, MutableSequence
+from typing import Optional, Sequence, Iterator, Dict, Set, TypeVar, Union, MutableSequence
 
 
 # %%
@@ -85,6 +85,19 @@ class BasicLiteral(Literal):
 
 # %%
 class Rule:
+
+    @property
+    def head(self) -> BasicLiteral:
+        if hasattr(self, '_head'):
+            return getattr(self, '_head')
+        raise NotImplementedError
+
+    @property
+    def body(self) -> Sequence[BasicLiteral]:
+        if hasattr(self, '_body'):
+            return getattr(self, '_body')
+        raise NotImplementedError
+
     @staticmethod
     def fmt_body(body: Sequence[BasicLiteral]):
         return ', '.join(map(str, body))
@@ -93,8 +106,16 @@ class Rule:
 # %%
 @dataclass(order=True, frozen=True)
 class NormalRule(Rule):
-    head: BasicLiteral = field(default_factory=BasicLiteral)
-    body: Sequence[BasicLiteral] = ()
+    _head: BasicLiteral = field(default_factory=BasicLiteral)
+    _body: Sequence[BasicLiteral] = ()
+
+    @property
+    def head(self) -> BasicLiteral:
+        return self._head
+
+    @property
+    def body(self) -> Sequence[BasicLiteral]:
+        return self._body
 
     def __str__(self):
         if self.body:
@@ -106,11 +127,15 @@ class NormalRule(Rule):
 # %%
 @dataclass(order=True, frozen=True)
 class IntegrityConstraint(Rule):
-    body: Sequence[BasicLiteral] = ()
+    _body: Sequence[BasicLiteral] = ()
 
     @property
-    def head(self):
+    def head(self) -> bool:
         return False
+
+    @property
+    def body(self) -> Sequence[BasicLiteral]:
+        return self._body
 
     def __str__(self):
         if self.body:
@@ -122,11 +147,15 @@ class IntegrityConstraint(Rule):
 # %%
 @dataclass(order=True, frozen=True)
 class Goal(Rule):
-    body: Sequence[BasicLiteral] = ()
+    _body: Sequence[BasicLiteral] = ()
 
     @property
     def head(self):
         return True
+
+    @property
+    def body(self) -> Sequence[BasicLiteral]:
+        return self._body
 
     def __str__(self):
         if self.body:
@@ -136,16 +165,165 @@ class Goal(Rule):
 
 
 # %%
-ForwardProof = TypeVar('ForwardProof', bound='Proof')
+_ForwardBaseNode = TypeVar('_ForwardBaseNode', bound='_BaseNode')
 
 
 @dataclass
-class Proof:
-    parent: ForwardProof = field(repr=False, default=None)
-    idx: int = 0
-    subject: Optional[Rule] = field(default=None)
-    children: MutableSequence[ForwardProof] = field(repr=False, default_factory=list)
+class _BaseNode:
+    subject: Union[Literal, Rule, None]
+    hypotheses: Set[Literal]
+    parent: Optional[_ForwardBaseNode]
+    children: MutableSequence[_ForwardBaseNode]
+    index: int
+    inductive: bool
+
+    @property
+    def is_expanded(self):
+        return self.children is not None
+
+    @property
+    def is_root(self):
+        return self.parent is None
+
+    @property
+    def is_leaf(self):
+        return self.is_expanded and not self.children
+
+    @property
+    def is_complete(self) -> bool:
+        return False
+
+    def is_exhausted(self, rules: Sequence[Rule]) -> bool:
+        raise NotImplementedError
+
+    def expand_all(self, rules: Sequence[Rule]) -> Sequence[_ForwardBaseNode]:
+        raise NotImplementedError
+
+    def expand(self, rules: Sequence[Rule]) -> Optional[_ForwardBaseNode]:
+        raise NotImplementedError
+
+    def propagate_parent(self) -> _ForwardBaseNode:
+        return self.parent
+
+
+@dataclass
+class Node(_BaseNode):
+    subject: Union[Literal, Rule, None] = field(default=None)
     hypotheses: Set[Literal] = field(default_factory=set)
+    parent: Optional[_BaseNode] = field(default=None)
+    children: Optional[MutableSequence[_BaseNode]] = field(default=None)
+    index: int = field(default=0)
+    inductive: bool = field(default=False)
+
+
+ForwardAndNode = TypeVar('ForwardAndNode', bound='AndNode')
+
+
+@dataclass
+class OrNode(Node):
+    subject: Optional[Literal] = field(default=None)
+    children: Optional[MutableSequence[ForwardAndNode]] = field(default=None)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.subject in self.hypotheses
+
+    def is_exhausted(self, rules: Sequence[Rule]) -> bool:
+        return self.index >= len(rules)
+
+    def expand_all(self, rules: Sequence[Rule]) -> Sequence[ForwardAndNode]:
+        self.children = []
+        for rule in rules:
+            if rule.head != self.subject:
+                continue
+            if any(-body_literal in self.hypotheses for body_literal in rule.body):
+                continue
+            hypotheses = deepcopy(self.hypotheses)
+            hypotheses.add(self.subject)
+            child = AndNode(subject=rule, hypotheses=hypotheses, parent=self)
+            self.children.append(child)
+        return self.children
+
+    def expand(self, rules: Sequence[Rule]) -> Optional[ForwardAndNode]:
+        if not self.is_expanded:
+            self.children = []
+        elif self.is_exhausted(rules):
+            return None
+        if -self.subject in self.hypotheses:
+            return None
+        rule = rules[self.index]
+        if rule.head != self.subject:
+            return None
+        if any(-body_literal in self.hypotheses for body_literal in rule.body):
+            return None
+        if not self.inductive and rule.body:
+            if all(body_literal.is_pos and body_literal in self.hypotheses for body_literal in rule.body):
+                return None
+        hypotheses = deepcopy(self.hypotheses)
+        hypotheses.add(self.subject)
+        child = AndNode(subject=rule, hypotheses=hypotheses, parent=self)
+        self.children.append(child)
+        return child
+
+    def propagate_parent(self) -> ForwardAndNode:
+        hypotheses = deepcopy(self.hypotheses)
+        parent = AndNode(subject=self.parent.subject,
+                         hypotheses=hypotheses,
+                         parent=self.parent.parent,
+                         children=self.parent.children,
+                         index=self.parent.index + 1,
+                         inductive=self.inductive)
+        self.parent = parent
+        return parent
+
+
+@dataclass
+class AndNode(Node):
+    subject: Optional[Rule] = field(default=None)
+    children: Optional[MutableSequence[OrNode]] = field(default=None)
+
+    @property
+    def is_complete(self) -> bool:
+        return all(body_literal in self.hypotheses for body_literal in self.subject.body)
+
+    def is_exhausted(self, rules: Sequence[Rule] = ()) -> bool:
+        return self.index >= len(self.subject.body)
+
+    def expand_all(self, rules: Sequence[Rule]) -> Sequence[OrNode]:
+        self.children = []
+        for body_literal in self.subject.body:
+            if body_literal in self.hypotheses:
+                continue
+            hypotheses = deepcopy(self.hypotheses)
+            child = OrNode(subject=body_literal, hypotheses=hypotheses, parent=self)
+            self.children.append(child)
+        return self.children
+
+    def expand(self, rules: Sequence[Rule]) -> Optional[OrNode]:
+        if not self.is_expanded:
+            self.children = []
+        if not self.subject.body:
+            self.inductive = True
+        if self.is_exhausted(rules):
+            return None
+        body_literal = self.subject.body[self.index]
+        if body_literal in self.hypotheses:
+            return None
+        hypotheses = deepcopy(self.hypotheses)
+        child = OrNode(subject=body_literal, hypotheses=hypotheses, parent=self)
+        self.children.append(child)
+        return child
+
+    def propagate_parent(self) -> OrNode:
+        hypotheses = deepcopy(self.hypotheses)
+        parent = OrNode(subject=self.parent.subject,
+                        hypotheses=hypotheses,
+                        parent=self.parent.parent,
+                        children=self.parent.children,
+                        index=self.parent.index + 1,
+                        inductive=self.inductive)
+        self.parent = parent
+        return parent
 
 
 # %%
@@ -175,11 +353,13 @@ class Program:
         nmr_chk_body = []
         for i, c_rule in enumerate(self.constraint_rules):
             chk_head = BasicLiteral(atom=Atom(Function("__chk_{}_{}".format(c_rule.head.atom.symbol.name, i))))
-            chk_body = (-c_rule.head, *(body_literal for body_literal in c_rule.body if -c_rule.head != body_literal))
-            chk_rule = NormalRule(head=chk_head, body=chk_body)
-            nmr_chk_body.append(-chk_head)
+            chk_rule_ = NormalRule(chk_head, (c_rule.head,))
+            chk_rules_ = (NormalRule(chk_head, (-body_literal,)) for body_literal in c_rule.body if
+                          c_rule.body != -c_rule.head)
+            chk_rules.append(chk_rule_)
+            chk_rules.extend(chk_rules_)
+            nmr_chk_body.append(chk_head)
 
-            chk_rules.append(chk_rule)
         sasp_rules.extend(chk_rules)
         nmr_chk_rule = NormalRule(nmr_chk_head, nmr_chk_body)
         sasp_rules.append(nmr_chk_rule)
@@ -218,41 +398,31 @@ class Program:
             if rule.head in reachable or -rule.head not in reachable:
                 yield rule
 
-    def evaluate_top_down(self, *literals: Literal):
-        hypothesis_set = set()
-        for rule in self.rules:
-            if not rule.body:
-                hypothesis_set.add(rule.head)
-        proofs = []
+    def evaluate_top_down(self, *literals: Literal) -> Sequence[Node]:
+        __nmr_chk = BasicLiteral(atom=Atom(Function("__nmr_chk")))
+        goal = Goal((*literals, __nmr_chk))
+        root = AndNode(subject=goal)
         rules = self.sASP.rules
-        __nmr_chk = BasicLiteral(atom=Atom(Function('__nmr_chk')))
-        root = Proof(subject=Goal(body=(*literals, __nmr_chk)), hypotheses=hypothesis_set)
-        stack = [root]
-        while stack:
-            current = stack.pop()
-            assert isinstance(current, Proof)
-            if set(current.subject.body) <= current.hypotheses:
-                if current.parent is None:
+        proofs = []
+        derivation_stack = [root]
+        while derivation_stack:
+            current = derivation_stack.pop()
+            if current.is_complete:
+                if current.is_root:
                     proofs.append(current)
                 else:
-                    parent = deepcopy(current.parent)
-                    parent.hypotheses = deepcopy(current.hypotheses)
-                    stack.append(parent)
-            else:
-                literal = None
-                for body_literal in current.subject.body:
-                    if body_literal not in current.hypotheses:
-                        literal = body_literal
-                        break
-                if literal is not None:
-                    for rule in rules:
-                        if rule.head == literal:
-                            if not any(-body_literal in current.hypotheses for body_literal in rule.body):
-                                hypotheses = deepcopy(current.hypotheses)
-                                hypotheses.add(literal)
-                                child = Proof(parent=current, subject=rule, hypotheses=hypotheses)
-                                current.children.append(child)
-                                stack.append(child)
+                    new_parent = current.propagate_parent()
+                    derivation_stack.append(new_parent)
+            elif not current.is_exhausted(rules):
+                child = current.expand(rules)
+                if child is None:
+                    current.index += 1
+                    derivation_stack.append(current)
+                else:
+                    if isinstance(current, OrNode):
+                        current.index += 1
+                        derivation_stack.append(current)
+                    derivation_stack.append(child)
 
         return proofs
 
@@ -280,7 +450,7 @@ class Program:
                         for body_literal in rule.body:
                             dual_bodies.append((-body_literal,))
                     for dual_body in dual_bodies:
-                        dual_rules.append(NormalRule(head=dual_head, body=dual_body))
+                        dual_rules.append(NormalRule(dual_head, dual_body))
                 elif len(rules) > 1:
                     dual_head = -literal
                     dual_body = []
@@ -299,11 +469,13 @@ class Program:
                                 for body_literal in rule.body:
                                     support_dual_bodies.append((-body_literal,))
                             for support_dual_body in support_dual_bodies:
-                                support_dual_rules.append(NormalRule(head=support_dual_head, body=support_dual_body))
-                    dual_rules.append(NormalRule(head=dual_head, body=dual_body))
+                                support_dual_rules.append(NormalRule(support_dual_head, support_dual_body))
+                    dual_rules.append(NormalRule(dual_head, dual_body))
                     dual_rules.extend(support_dual_rules)
         return Program(rules=dual_rules)
 
+
+# %% md
 
 # %%
 q = BasicLiteral(atom=Atom(Function('q')))
@@ -318,11 +490,28 @@ e = BasicLiteral(atom=Atom(Function('e')))
 f = BasicLiteral(atom=Atom(Function('f')))
 k = BasicLiteral(atom=Atom(Function('k')))
 
+
+def solve(p: Program, *literals: Literal):
+    proofs = p.evaluate_top_down(*literals)
+    if not proofs:
+        print("UNSAT")
+    else:
+        for i, proof in enumerate(proofs):
+            print("Answer {}:".format(i), end=' ')
+            print("{", end=' ')
+            print(' '.join(map(str, proof.hypotheses)), end='')
+            if not proof.hypotheses:
+                print(' ', end='')
+            print("}")
+        print("SAT {}+".format(len(proofs)))
+
+
+# %%
 p1 = Program(rules=(
-    NormalRule(head=p, body=(-q,)),
-    NormalRule(head=q, body=(-r,)),
-    NormalRule(head=r, body=(-p,)),
-    NormalRule(head=q, body=(-p,)),
+    NormalRule(p, (-q,)),
+    NormalRule(q, (-r,)),
+    NormalRule(r, (-p,)),
+    NormalRule(q, (-p,)),
 ))
 print(p1.fmt('\n'))  # AS: {{q, r}}
 print('-' * 10)
@@ -333,16 +522,148 @@ s1 = p1.sASP
 print(s1.fmt('\n'))
 
 # %%
-answer_sets = p1.evaluate_top_down(q)
-print("q:")
-for answer_set in answer_sets:
-    print("{", end='')
-    print(', '.join(map(str, answer_set.hypotheses)), end='')
-    print("}")
+print('#' * 3, p, '#' * 3)
+solve(p1, p)
+print('#' * 3, q, '#' * 3)
+solve(p1, q)
+print('#' * 3, r, '#' * 3)
+solve(p1, r)
+print('#' * 3, q, r, '#' * 3)
+solve(p1, q, r)
 
-print("r:")
-answer_sets = p1.evaluate_top_down(r)
-for answer_set in answer_sets:
-    print("{", end='')
-    print(', '.join(map(str, answer_set.hypotheses)), end='')
-    print("}")
+# %%
+p2 = Program(rules=(
+    NormalRule(q, (-r,)),
+    NormalRule(r, (-q,)),
+    NormalRule(p, (-p,)),
+    NormalRule(p, (-r,)),
+))
+print(p2.fmt('\n'))  # AS: {{q, p}}
+print('-' * 10)
+d2 = p2.dual
+print(d2.fmt('\n'))
+print('-' * 10)
+s2 = p2.sASP
+print(s2.fmt('\n'))
+# %%
+print('#' * 3, p, '#' * 3)
+solve(p2, p)
+print('#' * 3, q, '#' * 3)
+solve(p2, q)
+print('#' * 3, r, '#' * 3)
+solve(p2, r)
+print('#' * 3, q, p, '#' * 3)
+solve(p2, q, p)
+
+# %%
+p3 = Program(rules=(
+    NormalRule(a, (b, d)),
+    NormalRule(b, (d,)),
+    NormalRule(c, (d,)),
+    NormalRule(d, ()),
+))
+print(p3.fmt('\n'))
+print('-' * 10)
+d3 = p3.dual
+print(d3.fmt('\n'))
+print('-' * 10)
+s3 = p3.sASP
+print(s3.fmt('\n'))
+print('#' * 3, a, '#' * 3)
+solve(p3, a)
+print('#' * 3, b, '#' * 3)
+solve(p3, b)
+print('#' * 3, c, '#' * 3)
+solve(p3, c)
+print('#' * 3, d, '#' * 3)
+solve(p3, d)
+print('#' * 3, a, b, c, d, '#' * 3)
+solve(p3, a, b, c, d)
+
+# %%
+p4 = Program(rules=(
+    NormalRule(a, (k, -b)),
+    NormalRule(k, (e, -b)),
+    NormalRule(c, (a, b)),
+    NormalRule(b, (-a,)),
+    NormalRule(c, (k,)),
+    NormalRule(f, (e, -k, -c)),
+    NormalRule(e),
+))
+print(p4.fmt('\n'))
+print('-' * 10)
+d4 = p4.dual
+print(d4.fmt('\n'))
+print('-' * 10)
+s4 = p4.sASP
+print(s4.fmt('\n'))
+
+print('#' * 3, b, '#' * 3)
+solve(p4, b)
+print('#' * 3, e, '#' * 3)
+solve(p4, e)
+print('#' * 3, f, '#' * 3)
+solve(p4, f)
+print('#' * 3, a, '#' * 3)
+solve(p4, a)
+print('#' * 3, c, '#' * 3)
+solve(p4, c)
+print('#' * 3, k, '#' * 3)
+solve(p4, k)
+print('#' * 3, b, e, f, '#' * 3)
+solve(p4, b, e, f)
+print('#' * 3, a, c, e, k, '#' * 3)
+solve(p4, a, c, e, k)
+
+# %%
+p5 = Program(rules=(
+    NormalRule(p, (a, -q)),
+    NormalRule(q, (b, -r)),
+    NormalRule(r, (c, -p)),
+    NormalRule(q, (d, -p)),
+))
+print(p5.fmt('\n'))
+print('-' * 10)
+d5 = p5.dual
+print(d5.fmt('\n'))
+print('-' * 10)
+s5 = p5.sASP
+print(s5.fmt('\n'))
+
+# %%
+p6 = Program(rules=(
+    NormalRule(a, (-b,)),
+    NormalRule(b, (-a,)),
+))
+print(p6.fmt('\n'))  # AS: {{q, p}}
+print('-' * 10)
+d6 = p6.dual
+print(d6.fmt('\n'))
+print('-' * 10)
+s6 = p6.sASP
+print(s6.fmt('\n'))
+# %%
+p7 = Program(rules=(
+    NormalRule(a, (-b,)),
+    NormalRule(b, (-c,)),
+    NormalRule(c, (-a,)),
+))
+print(p7.fmt('\n'))  # AS: {{q, p}}
+print('-' * 10)
+d7 = p7.dual
+print(d7.fmt('\n'))
+print('-' * 10)
+s7 = p7.sASP
+print(s7.fmt('\n'))
+
+p8 = Program(rules=(
+    NormalRule(a, (b,)),
+    NormalRule(b, (a,))
+))
+s8 = p8.sASP
+print(s8.fmt('\n'))
+print(' '.join(map(str, p8.constraint_rules)))
+print(' '.join(map(str, p8.non_constraint_rules)))
+solve(p8, a)
+solve(p8, b)
+solve(p8, a, b)
