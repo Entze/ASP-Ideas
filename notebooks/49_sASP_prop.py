@@ -261,7 +261,7 @@ class OrNode(Node):
                 return None
         hypotheses = deepcopy(self.hypotheses)
         hypotheses.add(self.subject)
-        child = AndNode(subject=rule, hypotheses=hypotheses, parent=self)
+        child = AndNode(subject=rule, hypotheses=hypotheses, parent=self, inductive=self.inductive or not rule.body)
         self.children.append(child)
         return child
 
@@ -310,7 +310,10 @@ class AndNode(Node):
         if body_literal in self.hypotheses:
             return None
         hypotheses = deepcopy(self.hypotheses)
-        child = OrNode(subject=body_literal, hypotheses=hypotheses, parent=self)
+        child = OrNode(subject=body_literal,
+                       hypotheses=hypotheses,
+                       parent=self,
+                       inductive=self.inductive or body_literal.is_neg)
         self.children.append(child)
         return child
 
