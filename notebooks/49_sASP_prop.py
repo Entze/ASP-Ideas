@@ -39,7 +39,19 @@ class Atom:
 
 # %%
 class Literal:
-    pass
+    def __neg__(self):
+        raise NotImplementedError
+
+    def __abs__(self):
+        raise NotImplementedError
+
+    @property
+    def is_pos(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    def is_neg(self) -> bool:
+        raise NotImplementedError
 
 
 # %%
@@ -221,10 +233,11 @@ ForwardAndNode = TypeVar('ForwardAndNode', bound='AndNode')
 class OrNode(Node):
     subject: Optional[Literal] = field(default=None)
     children: Optional[MutableSequence[ForwardAndNode]] = field(default=None)
+    unfounded: bool = field(default=False)
 
     @property
     def is_complete(self) -> bool:
-        return self.subject in self.hypotheses
+        return self.is_expanded and not self.unfounded and self.subject in self.hypotheses
 
     def is_exhausted(self, rules: Sequence[Rule]) -> bool:
         return self.index >= len(rules)
@@ -243,12 +256,23 @@ class OrNode(Node):
         return self.children
 
     def expand(self, rules: Sequence[Rule]) -> Optional[ForwardAndNode]:
+        assert self.subject is not None
         if not self.is_expanded:
             self.children = []
-        elif self.is_exhausted(rules):
+        if self.is_exhausted(rules):
+            return None
+        if self.unfounded:
             return None
         if -self.subject in self.hypotheses:
             return None
+        if self.subject in self.hypotheses:
+            node = self
+            while not node.parent.is_root and node.subject.is_pos:
+                node = node.parent.parent
+                if node.subject == self.subject:
+                    self.unfounded = True
+                    return None
+
         rule = rules[self.index]
         if rule.head != self.subject:
             return None
@@ -278,7 +302,7 @@ class AndNode(Node):
 
     @property
     def is_complete(self) -> bool:
-        return all(body_literal in self.hypotheses for body_literal in self.subject.body)
+        return self.is_exhausted() and all(body_literal in self.hypotheses for body_literal in self.subject.body)
 
     def is_exhausted(self, rules: Sequence[Rule] = ()) -> bool:
         return self.index >= len(self.subject.body)
@@ -299,7 +323,7 @@ class AndNode(Node):
         if self.is_exhausted(rules):
             return None
         body_literal = self.subject.body[self.index]
-        if body_literal in self.hypotheses:
+        if body_literal.is_neg and body_literal in self.hypotheses:
             return None
         hypotheses = deepcopy(self.hypotheses)
         child = OrNode(subject=body_literal,
@@ -343,18 +367,18 @@ class Program:
         sasp_rules.extend(self.dual_of(tuple(self.non_constraint_rules)).rules)
 
         dual_facts = []
+        heads = set(rule.head for rule in self.reachable)
         considered = set()
         for rule in sasp_rules:
             for body_literal in rule.body:
                 l = abs(body_literal)
                 if l in considered:
                     continue
-                if l not in self.reachable:
+                if l not in heads:
                     dual_facts.append(NormalRule(-abs(body_literal)))
                     considered.add(l)
 
         sasp_rules.extend(dual_facts)
-
 
         chk_rules = []
         nmr_chk_head = BasicLiteral(atom=Atom(Function("__nmr_chk")))
@@ -377,6 +401,9 @@ class Program:
     def reachable(self) -> Dict[Rule, Set[Literal]]:
         reachable = defaultdict(set)
         for rule in self.rules:
+            if not rule.body:
+                reachable[rule] = set()
+                continue
             considered = set()
             literal_stack = []
             naf_stack = []
@@ -521,11 +548,6 @@ p1 = Program(rules=(
     NormalRule(r, (-p,)),
     NormalRule(q, (-p,)),
 ))
-print(p1.fmt('\n'))  # AS: {{q, r}}
-print('-' * 10)
-d1 = p1.dual
-print(d1.fmt('\n'))
-print('-' * 10)
 s1 = p1.sASP
 print(s1.fmt('\n'))
 
@@ -546,11 +568,7 @@ p2 = Program(rules=(
     NormalRule(p, (-p,)),
     NormalRule(p, (-r,)),
 ))
-print(p2.fmt('\n'))  # AS: {{q, p}}
-print('-' * 10)
-d2 = p2.dual
-print(d2.fmt('\n'))
-print('-' * 10)
+
 s2 = p2.sASP
 print(s2.fmt('\n'))
 # %%
@@ -570,11 +588,7 @@ p3 = Program(rules=(
     NormalRule(c, (d,)),
     NormalRule(d, ()),
 ))
-print(p3.fmt('\n'))
-print('-' * 10)
-d3 = p3.dual
-print(d3.fmt('\n'))
-print('-' * 10)
+
 s3 = p3.sASP
 print(s3.fmt('\n'))
 print('#' * 3, '#' * 3)
@@ -600,11 +614,7 @@ p4 = Program(rules=(
     NormalRule(f, (e, -k, -c)),
     NormalRule(e),
 ))
-print(p4.fmt('\n'))
-print('-' * 10)
-d4 = p4.dual
-print(d4.fmt('\n'))
-print('-' * 10)
+
 s4 = p4.sASP
 print(s4.fmt('\n'))
 
@@ -636,11 +646,7 @@ p5 = Program(rules=(
     NormalRule(r, (c, -p)),
     NormalRule(q, (d, -p)),
 ))
-print(p5.fmt('\n'))
-print('-' * 10)
-d5 = p5.dual
-print(d5.fmt('\n'))
-print('-' * 10)
+
 s5 = p5.sASP
 print(s5.fmt('\n'))
 # %%
@@ -653,9 +659,9 @@ solve(p5, q)
 print('#' * 3, r, '#' * 3)
 solve(p5, r)
 print('#' * 3, a, '#' * 3)
-solve(p5,  a)
+solve(p5, a)
 print('#' * 3, b, '#' * 3)
-solve(p5,  b)
+solve(p5, b)
 print('#' * 3, c, '#' * 3)
 solve(p5, c)
 
@@ -664,20 +670,16 @@ p6 = Program(rules=(
     NormalRule(a, (-b,)),
     NormalRule(b, (-a,)),
 ))
-print(p6.fmt('\n'))  # AS: {{q, p}}
-print('-' * 10)
-d6 = p6.dual
-print(d6.fmt('\n'))
-print('-' * 10)
+
 s6 = p6.sASP
 print(s6.fmt('\n'))
 print('#' * 3, '#' * 3)
 solve(p6)
 print('#' * 3, a, '#' * 3)
-solve(p6,  a)
+solve(p6, a)
 print('#' * 3, b, '#' * 3)
-solve(p6,  b)
-print('#' * 3,a, b, '#' * 3)
+solve(p6, b)
+print('#' * 3, a, b, '#' * 3)
 solve(p6, a, b)
 
 # %%
@@ -686,25 +688,21 @@ p7 = Program(rules=(
     NormalRule(b, (-c,)),
     NormalRule(c, (-a,)),
 ))
-print(p7.fmt('\n'))  # AS: {{q, p}}
-print('-' * 10)
-d7 = p7.dual
-print(d7.fmt('\n'))
-print('-' * 10)
+
 s7 = p7.sASP
 print(s7.fmt('\n'))
 print('#' * 3, a, '#' * 3)
-solve(p7,  a)
+solve(p7, a)
 print('#' * 3, b, '#' * 3)
-solve(p7,  b)
+solve(p7, b)
 print('#' * 3, c, '#' * 3)
-solve(p7,  c)
+solve(p7, c)
 print('#' * 3, a, b, '#' * 3)
-solve(p7,  a, b)
+solve(p7, a, b)
 print('#' * 3, a, c, '#' * 3)
-solve(p7,  a, c)
+solve(p7, a, c)
 print('#' * 3, b, c, '#' * 3)
-solve(p7,  b, c)
+solve(p7, b, c)
 print('#' * 3, a, b, c, '#' * 3)
 solve(p7, a, b, c)
 
@@ -720,7 +718,7 @@ print('#' * 3, a, '#' * 3)
 solve(p8, a)
 print('#' * 3, b, '#' * 3)
 solve(p8, b)
-print('#' * 3, a,b, '#' * 3)
+print('#' * 3, a, b, '#' * 3)
 solve(p8, a, b)
 
 p9 = Program(rules=(
