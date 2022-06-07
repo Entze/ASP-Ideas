@@ -110,7 +110,7 @@ class SpatialTransformer(clingo.ast.Transformer):
 
     def visit_TheoryAtom(self, theory_atom: clingo.ast.AST, loc: Optional[str] = None):
         if theory_atom.term.name in SpatialTheory.spatial_theory_atoms and loc is not None:
-            theory_atom.term.arguments.insert(0, clingo.ast.Function(theory_atom.location, loc, [], False))
+            theory_atom.term.function_arguments.insert(0, clingo.ast.Function(theory_atom.location, loc, [], False))
         return theory_atom
 
 
@@ -130,7 +130,7 @@ class SpatialTelingoTransformer(clingo.ast.Transformer):
 
     def visit_TheoryAtom(self, theory_atom: clingo.ast.AST, time_function: Optional[clingo.ast.AST] = None):
         if time_function is not None and theory_atom.term.name in SpatialTheory.spatial_theory_atoms:
-            theory_atom.term.arguments.append(time_function)
+            theory_atom.term.function_arguments.append(time_function)
         return theory_atom
 
 
