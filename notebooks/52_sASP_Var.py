@@ -1,9 +1,10 @@
 import abc
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import cached_property
-from typing import Optional, Sequence, Union, Dict, List, Tuple, Set, TypeVar, Mapping
+from typing import Optional, Sequence, Union, Dict, List, Tuple, Set, TypeVar, Mapping, MutableSequence
 
 import clingo.ast
 
@@ -196,6 +197,9 @@ class Function(TopLevelSymbol):
         return Function(self.name, tuple(arguments))
 
 
+ForwardAtom = TypeVar('ForwardAtom', bound='Atom')
+
+
 @dataclass(order=True, frozen=True)
 class Atom:
     symbol: TopLevelSymbol = field(default_factory=Function)
@@ -211,6 +215,10 @@ class Atom:
     @property
     def signature(self) -> str:
         return self.symbol.signature
+
+    def match(self, other: ForwardAtom) -> bool:
+        return self.symbol.function_name == other.symbol.function_name and \
+               len(self.symbol.function_arguments) == len(other.symbol.function_arguments)
 
     def __str__(self):
         return str(self.symbol)
@@ -559,6 +567,163 @@ class Goal(Rule):
         return self
 
 
+Forward_BaseNode = TypeVar('Forward_BaseNode', bound='_BaseNode')
+
+
+@dataclass
+class _BaseNode:
+    subject: Union[ClauseElement, Rule, Directive]
+    parent: Optional[Forward_BaseNode]
+    children: Optional[Sequence[Forward_BaseNode]]
+    index: int
+    is_exhausted: bool
+    hypotheses: Set[Literal]
+    positive_constraints: Dict[Variable, Set[Symbol]]
+    negative_constraints: Dict[Variable, Set[Symbol]]
+
+    @property
+    def is_root(self) -> bool:
+        return self.parent is None
+
+    @property
+    def is_success(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    def is_expanded(self) -> bool:
+        return self.children is not None
+
+    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+        raise NotImplementedError
+
+
+@dataclass
+class BaseNode(_BaseNode):
+    subject: ClauseElement = field(default_factory=BasicLiteral)
+    parent: Optional[_BaseNode] = field(default=None)
+    children: Optional[Sequence[Forward_BaseNode]] = field(default=None)
+    index: int = field(default=0)
+    is_exhausted: bool = field(default=False)
+    hypotheses: Set[Literal] = field(default_factory=set)
+    positive_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=dict)
+    negative_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=dict)
+
+
+ForwardOrNode = TypeVar('ForwardOrNode', bound='OrNode')
+ForwardAndNode = TypeVar('ForwardAndNode', bound='AndNode')
+
+
+@dataclass
+class Leaf(BaseNode):
+    subject: Directive = field(default_factory=Directive.false)
+    parent: Optional[BaseNode] = field
+
+    @property
+    def is_success(self) -> bool:
+        return self.subject.name == 'true'
+
+    @property
+    def is_expanded(self) -> bool:
+        return True
+
+
+@dataclass
+class OrNode(BaseNode):
+    subject: ClauseElement = field(default_factory=BasicLiteral)
+    parent: Optional[ForwardAndNode] = field(default=None)
+    children: Optional[MutableSequence[Union[ForwardAndNode, Leaf]]] = field(default=None)
+
+    @property
+    def is_success(self) -> bool:
+        return self.is_expanded and any(child.is_success for child in self.children)
+
+    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+        if self.children is None:
+            self.children = []
+        assert self.children is not None
+        child = None
+        if isinstance(self.subject, BasicLiteral):
+            if self.subject in self.hypotheses:
+                child = Leaf(subject=Directive.true(), parent=self)
+            elif -self.subject in self.hypotheses:
+                child = Leaf(subject=Directive.false(), parent=self)
+            else:
+                hypotheses = sorted(*self.hypotheses)
+                if self.index < len(hypotheses):
+                    pass
+
+                # else:
+                rules_ = rule_dict[self.subject.atom_signature]
+                if self.subject.is_pos:
+                    rules = rules_['primal']
+                else:
+                    rules = rules_['dual']
+                if self.index >= len(rules):
+                    self.is_exhausted = True
+                else:
+                    rule = rules[self.index]
+                    child_positive_constraints = dict()
+                    child_negative_constraints = dict()
+                    unifiable = unify_atoms(self.subject.atom.symbol, self.positive_constraints,
+                                            self.negative_constraints,
+                                            rule.head.atom.symbol, child_positive_constraints,
+                                            child_negative_constraints)
+                    if unifiable:
+                        child = AndNode(subject=rule,
+                                        parent=self,
+                                        hypotheses=deepcopy(self.hypotheses),
+                                        positive_constraints=child_positive_constraints,
+                                        negative_constraints=child_negative_constraints)
+
+        elif isinstance(self.subject, Comparison):
+            if self.subject.comparison.Equal:
+                pass
+            elif self.subject.comparison.NotEqual:
+                pass
+        elif isinstance(self.subject, Directive):
+            if self.subject.name in ('true', 'false'):
+                child = Leaf(self.subject, parent=self)
+
+        if child is not None:
+            self.children.append(child)
+        self.index += 1
+        return child
+
+
+@dataclass
+class AndNode(BaseNode):
+    subject: Rule = field(default_factory=NormalRule)
+    parent: Optional[OrNode] = field(default=None)
+    children: Optional[MutableSequence[Union[OrNode, Leaf]]] = field(default=None)
+
+    @property
+    def is_success(self) -> bool:
+        return self.is_expanded and all(child.is_success for child in self.children)
+
+    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+        if self.children is None:
+            self.children = []
+        child = None
+        if self.subject.body:
+            if self.index < len(self.subject.body):
+                element = self.subject.body[self.index]
+                child = OrNode(subject=element,
+                               parent=self,
+                               hypotheses=deepcopy(self.hypotheses),
+                               positive_constraints=deepcopy(self.positive_constraints),
+                               negative_constraints=deepcopy(self.negative_constraints))
+            else:
+                self.is_exhausted = True
+        else:
+            child = Leaf(subject=Directive.true(), parent=self)
+            self.is_exhausted = True
+
+        if child is not None:
+            self.children.append(child)
+        self.index += 1
+        return child
+
+
 @dataclass(order=True, frozen=True)
 class Program:
     rules: Sequence[Rule] = field(default_factory=tuple)
@@ -626,8 +791,6 @@ class Program:
             signature_rules[head_signature]['primal' if rule.head.is_pos else 'dual'].append(rule)
         return signature_rules
 
-
-
     @property
     def propositional_rules(self) -> Sequence[Rule]:
         return tuple(rule for rules in self.program_dicts[0].values() for rule in rules)
@@ -649,8 +812,21 @@ class Program:
         e = sep + end if end is not None else ''
         return "{}{}{}".format(b, sep.join(map(str, self.rules)), e)
 
-    def evaluate_backwards(self, *query: ClauseElement):
-        pass
+    def evaluate_backwards(self, *query: ClauseElement, nmr_check: bool = True):
+        goal = Goal(*query)
+        root = AndNode(subject=goal)
+        program_dict = self.sASP_program_dict
+        work = [root]
+        while work:
+            current = work.pop()
+            if current.is_success:
+                if current.is_root:
+                    yield deepcopy(current)
+                elif current.parent.is_success:
+                    work.append(current.parent)
+            elif not current.is_exhausted:
+                current.expand(program_dict)
+                work.extend(reversed(current.children))
 
     @staticmethod
     def propositional_dual(propositional_rules: Sequence[Rule]):
@@ -664,7 +840,7 @@ class Program:
         for rule in propositional_rules:
             assert isinstance(rule, NormalRule)
             head: BasicLiteral = rule.head
-            body: Sequence[ClauseElement] = tuple(sorted(set(rule.body)))
+            body: Sequence[ClauseElement] = tuple(sorted(*set(rule.body)))
             if body not in b2n:
                 n += 1
                 b2n[body] = n
@@ -725,7 +901,7 @@ class Program:
         for rule in predicate_rules:
             assert isinstance(rule, NormalRule)
             head: BasicLiteral = rule.head
-            body: Sequence[ClauseElement] = tuple(sorted(set(rule.body)))
+            body: Sequence[ClauseElement] = tuple(sorted(*set(rule.body)))
             if body not in b2n:
                 n += 1
                 b2n[body] = n
@@ -773,6 +949,31 @@ class Program:
             if l not in h2n:
                 dual_rules.append(NormalRule(-l))
         return dual_rules
+
+
+def unify(src: Symbol, src_pos, src_neg, dst: Symbol, dst_pos, dst_neg) -> bool:
+    src_bounds: Set[Symbol] = src_pos.get(src, set())
+    src_constraints: Set[Symbol] = src_neg.get(src, set())
+    dst_bounds: Set[Symbol] = src_pos.get(dst, set())
+    dst_constraints: Set[Symbol] = src_neg.get(dst, set())
+    if isinstance(src, Variable):
+        if isinstance(dst, Variable):
+            if src_bounds != dst_bounds and (not src_bounds <= dst_bounds) and (not src_bounds >= dst_bounds):
+                return False
+            if not src_bounds.isdisjoint(dst_constraints) and not dst_bounds.isdisjoint(src_constraints):
+                return False
+            dst_pos[dst] = src_bounds | dst_bounds
+            dst_neg[dst] = src_constraints | dst_constraints
+        elif isinstance(dst, Symbol):
+            if dst in src_constraints:
+                return False
+            dst_pos[src] = deepcopy(src_pos[src])
+            dst_pos[src].add(dst)
+            dst_neg[src] = deepcopy(src_neg[src])
+    elif isinstance(src, Symbol):
+        if isinstance(dst, Symbol):
+            pass
+
 
 
 A = Variable('A')
@@ -932,7 +1133,6 @@ duals = Program.predicate_dual(program4.canonical_predicate_rules)
 print('\n'.join(map(str, duals)))
 print("-" * 10)
 
-
 print("#" * 80)
 print("Program.sASP_program_dict:")
 print("-" * 20)
@@ -951,4 +1151,3 @@ print('\n'.join(map(str, primal)))
 print("% Dual:")
 print('\n'.join(map(str, dual)))
 print("-" * 10)
-
