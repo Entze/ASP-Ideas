@@ -250,6 +250,11 @@ class Literal(HeadClauseElement):
 
     @property
     @abc.abstractmethod
+    def atom_signature(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
     def is_pos(self) -> bool:
         raise NotImplementedError
 
@@ -344,8 +349,8 @@ class Comparison(ClauseElement):
     comparison: ComparisonOperator = field(default=ComparisonOperator.Equal)
     right: Symbol = field(default_factory=Symbol)
 
-    def __str__(self):
-        return "{}{}{}".format(self.left, self.comparison, self.right)
+    def __abs__(self):
+        raise NotImplementedError
 
     def __neg__(self):
         if self.comparison is ComparisonOperator.Equal:
@@ -354,6 +359,9 @@ class Comparison(ClauseElement):
             return Comparison(self.left, ComparisonOperator.Equal, self.right)
         else:
             raise NotImplementedError
+
+    def __str__(self):
+        return "{}{}{}".format(self.left, self.comparison, self.right)
 
     @property
     def has_variable(self) -> bool:
@@ -556,6 +564,22 @@ class Program:
     rules: Sequence[Rule] = field(default_factory=tuple)
 
     @cached_property
+    def program_dicts(self):
+        prop_atoms2rules = defaultdict(set)
+        pred_atoms2rules = defaultdict(set)
+        queue: List[Rule] = [*self.rules]
+        while queue:
+            rule = queue.pop(0)
+            maybe_prop = not rule.has_variables
+            signature = rule.head_signature
+            maybe_prop = maybe_prop and signature not in pred_atoms2rules
+            if maybe_prop:
+                prop_atoms2rules[signature].add(rule)
+            else:
+                pred_atoms2rules[signature].add(rule)
+        return prop_atoms2rules, pred_atoms2rules
+
+    @cached_property
     def canonical_program_dicts(self):
         prop_atoms2rules = defaultdict(set)
         pred_atoms2rules = defaultdict(set)
@@ -574,7 +598,7 @@ class Program:
                     queue.extend(prop_atoms2rules[signature])
                     prop_atoms2rules[signature].clear()
                 for literal in rule.body:
-                    if not literal.has_variable:
+                    if not literal.has_variable or not isinstance(literal, Literal):
                         continue
                     if abs(literal) in prop_atoms2rules:
                         queue.extend(prop_atoms2rules[literal.atom_signature])
@@ -584,18 +608,49 @@ class Program:
 
         return prop_atoms2rules, pred_atoms2rules
 
+    @cached_property
+    def sASP_program_dict(self):
+        signature_rules = defaultdict(lambda: dict(primal=list(), dual=list()))
+        prop_dual = Program.propositional_dual(self.canonical_propositional_rules)
+        pred_dual = Program.predicate_dual(self.canonical_predicate_rules)
+        prop, pred = self.program_dicts
+        for signature, rules in prop.items():
+            signature_rules[signature]['primal'].extend(rules)
+        for signature, rules in pred.items():
+            signature_rules[signature]['primal'].extend(rules)
+        for rule in prop_dual:
+            head_signature = rule.head_signature
+            signature_rules[head_signature]['primal' if rule.head.is_pos else 'dual'].append(rule)
+        for rule in pred_dual:
+            head_signature = rule.head_signature
+            signature_rules[head_signature]['primal' if rule.head.is_pos else 'dual'].append(rule)
+        return signature_rules
+
+
+
     @property
     def propositional_rules(self) -> Sequence[Rule]:
-        return tuple(rule for rules in self.canonical_program_dicts[0].values() for rule in rules)
+        return tuple(rule for rules in self.program_dicts[0].values() for rule in rules)
 
     @property
     def predicate_rules(self) -> Sequence[Rule]:
+        return tuple(rule for rules in self.program_dicts[1].values() for rule in rules)
+
+    @property
+    def canonical_propositional_rules(self) -> Sequence[Rule]:
+        return tuple(rule for rules in self.canonical_program_dicts[0].values() for rule in rules)
+
+    @property
+    def canonical_predicate_rules(self) -> Sequence[Rule]:
         return tuple(rule for rules in self.canonical_program_dicts[1].values() for rule in rules)
 
     def fmt(self, sep=' ', begin=None, end=None):
         b = begin + sep if begin is not None else ''
         e = sep + end if end is not None else ''
         return "{}{}{}".format(b, sep.join(map(str, self.rules)), e)
+
+    def evaluate_backwards(self, *query: ClauseElement):
+        pass
 
     @staticmethod
     def propositional_dual(propositional_rules: Sequence[Rule]):
@@ -683,10 +738,35 @@ class Program:
             dual_head = -h
             dual_body = []
             dual_rule = None
+            head_variables = h.variables
 
             if ns and not any(n == 0 for n in ns):
                 for n in ns:
                     b: Sequence[ClauseElement] = n2b[n]
+                    body_variables = set(variable for element in b for variable in element.variables)
+                    existentials = body_variables - head_variables
+                    func__bf_n_ = Function(name="__body_fails_", arguments=(
+                        Term(IntegerConstant(n)),
+                        Function(arguments=tuple(head_variables)),
+                        Function(arguments=tuple(existentials))
+                    ))
+                    __bf_n_ = BasicLiteral(atom=Atom(func__bf_n_))
+                    dual_body_literal = func__bf_n_
+                    for existential in existentials:
+                        dual_body_literal = Directive.forall(existential, dual_body_literal)
+                    if not existentials:
+                        dual_body_literal = __bf_n_
+                    dual_body.append(dual_body_literal)
+
+                    support_rule_head = __bf_n_
+                    support_rules = []
+                    for e in b:
+                        support_rules.append(NormalRule(support_rule_head, (-e,)))
+
+                    dual_rules.extend(support_rules)
+
+                dual_rules.append(NormalRule(dual_head, dual_body))
+
             if dual_rule is not None:
                 dual_rules.append(dual_rule)
         for l in ib:
@@ -697,6 +777,8 @@ class Program:
 
 A = Variable('A')
 B = Variable('B')
+X = Variable('X')
+Y = Variable('Y')
 t_A_A = BasicLiteral(atom=Atom(Function(name='t', arguments=(A, A))))
 t_A_B = BasicLiteral(atom=Atom(Function(name='t', arguments=(A, B))))
 q_0 = BasicLiteral(atom=Atom(Function(name='q', arguments=(Term.zero(),))))
@@ -711,12 +793,21 @@ p_1 = BasicLiteral(atom=Atom(Function(name='p', arguments=(Term.one(),))))
 q_A = BasicLiteral(atom=Atom(Function(name='q', arguments=(A,))))
 p_A = BasicLiteral(atom=Atom(Function(name='p', arguments=(A,))))
 
+p = BasicLiteral(atom=Atom(Function(name='p')))
+q_X = BasicLiteral(atom=Atom(Function(name='q', arguments=(X,))))
+q_Y = BasicLiteral(atom=Atom(Function(name='q', arguments=(Y,))))
+Y_ne_a = Comparison(Y, ComparisonOperator.NotEqual, _a)
+Y_e_a = Comparison(Y, ComparisonOperator.Equal, _a)
+
 r1 = NormalRule(head=t_A_A)
 r2 = NormalRule(head=q_0)
 r3 = NormalRule(head=p_)
 r4 = NormalRule(head=q_A, body=(p_A,))
 r5 = NormalRule(head=p_1)
 r6 = NormalRule(head=t_A_B)
+r7 = NormalRule(head=p, body=(-q_X,))
+r8 = NormalRule(head=q_Y, body=(Y_e_a,))
+r9 = NormalRule(head=q_Y, body=(Y_ne_a,))
 
 print("#" * 80)
 print("NormalRule.variable_normal_form():")
@@ -736,6 +827,12 @@ print(r5)
 print(r5.variable_normal_form())
 print(r6)
 print(r6.variable_normal_form())
+print(r7)
+print(r7.variable_normal_form())
+print(r8)
+print(r8.variable_normal_form())
+print(r9)
+print(r9.variable_normal_form())
 
 print("#" * 80)
 print("Program.canonical_program_dicts:")
@@ -800,3 +897,58 @@ for s, rs in pred.items():
     print("{}:".format(s))
     for r in rs:
         print(r)
+
+program4 = Program(rules=(r7, r8, r9))
+prop, pred = program4.canonical_program_dicts
+
+print("-" * 10)
+print(program4.fmt('\n'))
+
+print("-" * 10)
+
+for s, rs in prop.items():
+    print("{}:".format(s))
+    for r in rs:
+        print(r)
+
+print("-" * 10)
+
+for s, rs in pred.items():
+    print("{}:".format(s))
+    for r in rs:
+        print(r)
+
+print("#" * 80)
+print("Program.predicate_dual:")
+print("-" * 20)
+
+duals = Program.predicate_dual(program1.canonical_predicate_rules)
+
+print('\n'.join(map(str, duals)))
+print("-" * 10)
+
+duals = Program.predicate_dual(program4.canonical_predicate_rules)
+
+print('\n'.join(map(str, duals)))
+print("-" * 10)
+
+
+print("#" * 80)
+print("Program.sASP_program_dict:")
+print("-" * 20)
+sASP = program4.sASP_program_dict
+
+primal = []
+dual = []
+for signature in sASP:
+    pos = sASP[signature]['primal']
+    neg = sASP[signature]['dual']
+    primal.extend(pos)
+    dual.extend(neg)
+
+print("% Primal:")
+print('\n'.join(map(str, primal)))
+print("% Dual:")
+print('\n'.join(map(str, dual)))
+print("-" * 10)
+
