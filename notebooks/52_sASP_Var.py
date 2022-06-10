@@ -567,6 +567,127 @@ class Goal(Rule):
         return self
 
 
+ForwardCoinductiveHypothesesSet = TypeVar('ForwardCoinductiveHypothesesSet', bound='CoinductiveHypothesesSet')
+
+
+def empty_constraints():
+    return defaultdict(set)
+
+
+@dataclass
+class CoinductiveHypothesesSet:
+    hypotheses: Set[BasicLiteral] = field(default_factory=set)
+    bounds: Dict[Variable, Set[Symbol]] = field(default_factory=empty_constraints)
+    negative_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=empty_constraints)
+
+    def __contains__(self, item):
+        if isinstance(item, BasicLiteral):
+            return item in self.hypotheses
+        if isinstance(item, Variable):
+            return self.bounds[item] or self.negative_constraints[item]
+
+    def __str__(self):
+        return self.fmt()
+
+    def is_negativly_constrained(self, variable: Variable) -> bool:
+        return variable in self.negative_constraints and bool(self.negative_constraints[variable])
+
+    def is_bound(self, variable: Variable) -> bool:
+        return variable in self.bounds and bool(self.bounds[variable])
+
+    def fmt(self, sep=' ', literal_sep=',', variable_sep=' ', constraint_sep=' '):
+        fmt = "{}{}{}".format('{', literal_sep.join(map(str, self.hypotheses)), '}', )
+        fmt += sep
+        for variable in self.bounds:
+            fmt += variable_sep
+            for bound in self.bounds[variable]:
+                fmt += constraint_sep
+                fmt += "{} = {}".format(variable, bound)
+            if self.bounds[variable]:
+                fmt += constraint_sep
+        if self.bounds:
+            fmt += variable_sep
+        fmt += sep
+        for variable in self.negative_constraints:
+            fmt += variable_sep
+            for negative_constraint in self.negative_constraints[variable]:
+                fmt += constraint_sep
+                fmt += "{} /= {}".format(variable, negative_constraint)
+            if self.negative_constraints[variable]:
+                fmt += constraint_sep
+        if self.negative_constraints:
+            fmt += variable_sep
+        return fmt
+
+    def bind_value(self, variable: Variable, value: Symbol) -> bool:
+        if not isinstance(value, Variable) and value not in self.bounds[variable] and len(self.bounds[variable]) > 0:
+            return False
+        if value in self.negative_constraints[variable]:
+            return False
+        #if not isinstance(value, Variable) and any(constructive_unification(value, negative_constraint) for negative_constraint in self.negative_constraints[variable]):
+        #    return False
+        self.bounds[variable].add(value)
+        return True
+
+    def forbid_value(self, variable: Variable, value: Symbol) -> bool:
+        if value in self.bounds[variable]:
+            return False
+        #if not isinstance(value, Variable) and any(constructive_unification(value, bound) for bound in self.bounds[variable]):
+        #    return False
+        self.negative_constraints[variable].add(value)
+        return True
+
+    def forbid_values(self, variable: Variable, *values: Symbol) -> bool:
+        if not self.bounds[variable].isdisjoint(values):
+            return False
+        for value in values:
+            c = self.forbid_value(variable, value)
+            if not c:
+                return False
+        return True
+
+    def positive_constraints(self, literal: BasicLiteral, variable: Variable) -> Set[Symbol]:
+        pass
+
+    def get_value(self, literal: BasicLiteral, variable: Variable) -> Optional[Symbol]:
+        return next(iter(self.positive_constraints(literal, variable)), None)
+
+    def negative_constraints(self, literal: BasicLiteral, variable: Variable) -> Set[Symbol]:
+        pass
+
+    def unify(self, src: BasicLiteral, dst: BasicLiteral, dst_chs: ForwardCoinductiveHypothesesSet) -> bool:
+        if src.atom.symbol.function_name != dst.atom.symbol.function_name:
+            return False
+        nargs = len(src.atom.symbol.function_arguments)
+        if nargs != len(dst.atom.symbol.function_arguments):
+            return False
+        for i in range(nargs):
+            src_arg: Symbol = src.atom.symbol.function_arguments[i]
+            dst_arg: Symbol = dst.atom.symbol.function_arguments[i]
+            if isinstance(src_arg, Variable):
+                src_val = self.get_value(src, src_arg)
+            else:
+                src_val = src_arg
+            if src_val is not None:
+                if isinstance(dst_arg, Variable):
+                    dst_val = dst_chs.get_value(dst, dst_arg)
+                    if dst_val is None:
+                        unifiable = dst_chs.bind_value(dst, dst_arg, src_val)
+                        if isinstance(src_arg, Variable):
+                            unifiable = unifiable and dst_chs.forbid_values(dst, dst_arg,
+                                                                            *self.negative_constraints(src, src_arg))
+                        if not unifiable:
+                            return False
+                    elif src_val != dst_val:
+                        return False
+                elif dst_arg != src_val:
+                    return False
+        return True
+
+    def constructive_unification(self, left: Symbol, right: Symbol) -> bool:
+        pass
+
+
 Forward_BaseNode = TypeVar('Forward_BaseNode', bound='_BaseNode')
 
 
@@ -577,9 +698,7 @@ class _BaseNode:
     children: Optional[Sequence[Forward_BaseNode]]
     index: int
     is_exhausted: bool
-    hypotheses: Set[Literal]
-    positive_constraints: Dict[Variable, Set[Symbol]]
-    negative_constraints: Dict[Variable, Set[Symbol]]
+    hypotheses: Dict[BasicLiteral, Dict[Variable, Dict[str, Set[Symbol]]]]
 
     @property
     def is_root(self) -> bool:
@@ -604,9 +723,7 @@ class BaseNode(_BaseNode):
     children: Optional[Sequence[Forward_BaseNode]] = field(default=None)
     index: int = field(default=0)
     is_exhausted: bool = field(default=False)
-    hypotheses: Set[Literal] = field(default_factory=set)
-    positive_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=dict)
-    negative_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=dict)
+    hypotheses: Dict[BasicLiteral, Dict[Variable, Dict[str, Set[Symbol]]]] = field(default_factory=dict)
 
 
 ForwardOrNode = TypeVar('ForwardOrNode', bound='OrNode')
@@ -662,18 +779,13 @@ class OrNode(BaseNode):
                     self.is_exhausted = True
                 else:
                     rule = rules[self.index]
-                    child_positive_constraints = dict()
-                    child_negative_constraints = dict()
-                    unifiable = unify_atoms(self.subject.atom.symbol, self.positive_constraints,
-                                            self.negative_constraints,
-                                            rule.head.atom.symbol, child_positive_constraints,
-                                            child_negative_constraints)
-                    if unifiable:
-                        child = AndNode(subject=rule,
-                                        parent=self,
-                                        hypotheses=deepcopy(self.hypotheses),
-                                        positive_constraints=child_positive_constraints,
-                                        negative_constraints=child_negative_constraints)
+                    child_hypotheses = dict()
+                    #unifiable = unify(self.subject, self.hypotheses,
+                    #                  rule.head, child_hypotheses)
+                    #if unifiable:
+                    #    child = AndNode(subject=rule,
+                    #                    parent=self,
+                    #                    hypotheses=child_hypotheses),
 
         elif isinstance(self.subject, Comparison):
             if self.subject.comparison.Equal:
@@ -709,9 +821,7 @@ class AndNode(BaseNode):
                 element = self.subject.body[self.index]
                 child = OrNode(subject=element,
                                parent=self,
-                               hypotheses=deepcopy(self.hypotheses),
-                               positive_constraints=deepcopy(self.positive_constraints),
-                               negative_constraints=deepcopy(self.negative_constraints))
+                               hypotheses=deepcopy(self.hypotheses))
             else:
                 self.is_exhausted = True
         else:
@@ -840,7 +950,7 @@ class Program:
         for rule in propositional_rules:
             assert isinstance(rule, NormalRule)
             head: BasicLiteral = rule.head
-            body: Sequence[ClauseElement] = tuple(sorted(*set(rule.body)))
+            body: Sequence[ClauseElement] = tuple(sorted(set(rule.body)))
             if body not in b2n:
                 n += 1
                 b2n[body] = n
@@ -901,7 +1011,7 @@ class Program:
         for rule in predicate_rules:
             assert isinstance(rule, NormalRule)
             head: BasicLiteral = rule.head
-            body: Sequence[ClauseElement] = tuple(sorted(*set(rule.body)))
+            body: Sequence[ClauseElement] = tuple(sorted(set(rule.body)))
             if body not in b2n:
                 n += 1
                 b2n[body] = n
@@ -949,32 +1059,6 @@ class Program:
             if l not in h2n:
                 dual_rules.append(NormalRule(-l))
         return dual_rules
-
-
-def unify(src: Symbol, src_pos, src_neg, dst: Symbol, dst_pos, dst_neg) -> bool:
-    src_bounds: Set[Symbol] = src_pos.get(src, set())
-    src_constraints: Set[Symbol] = src_neg.get(src, set())
-    dst_bounds: Set[Symbol] = src_pos.get(dst, set())
-    dst_constraints: Set[Symbol] = src_neg.get(dst, set())
-    if isinstance(src, Variable):
-        if isinstance(dst, Variable):
-            if src_bounds != dst_bounds and (not src_bounds <= dst_bounds) and (not src_bounds >= dst_bounds):
-                return False
-            if not src_bounds.isdisjoint(dst_constraints) and not dst_bounds.isdisjoint(src_constraints):
-                return False
-            dst_pos[dst] = src_bounds | dst_bounds
-            dst_neg[dst] = src_constraints | dst_constraints
-        elif isinstance(dst, Symbol):
-            if dst in src_constraints:
-                return False
-            dst_pos[src] = deepcopy(src_pos[src])
-            dst_pos[src].add(dst)
-            dst_neg[src] = deepcopy(src_neg[src])
-    elif isinstance(src, Symbol):
-        if isinstance(dst, Symbol):
-            pass
-
-
 
 A = Variable('A')
 B = Variable('B')
@@ -1151,3 +1235,35 @@ print('\n'.join(map(str, primal)))
 print("% Dual:")
 print('\n'.join(map(str, dual)))
 print("-" * 10)
+
+print("#" * 80)
+print("Unify:")
+print("-" * 20)
+
+_src_chs = CoinductiveHypothesesSet()
+_dst_chs = CoinductiveHypothesesSet()
+
+_unifiable1 = _src_chs.unify(q_0, q_X, _dst_chs)
+print("{}: ".format(_unifiable1), _dst_chs)
+
+_src_chs = CoinductiveHypothesesSet()
+_dst_chs = CoinductiveHypothesesSet()
+
+_unifiable2 = _src_chs.unify(q_X, q_0, _dst_chs)
+
+print("{}: ".format(_unifiable2), _dst_chs)
+
+_src_chs = CoinductiveHypothesesSet()
+_dst_chs = CoinductiveHypothesesSet()
+
+_unifiable3 = _src_chs.unify(q_X, p_1, _dst_chs)
+
+print("{}: ".format(_unifiable3), _dst_chs)
+
+_src_chs = CoinductiveHypothesesSet({q_X: {X: dict(Positive={Term.one()}, Negative={Term.zero()})}})
+_dst_chs = CoinductiveHypothesesSet()
+
+_unifiable4 = _src_chs.unify(q_X, q_Y, _dst_chs)
+
+print(_src_chs)
+print("{}: ".format(_unifiable4), _dst_chs)
