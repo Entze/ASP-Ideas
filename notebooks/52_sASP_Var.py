@@ -1138,6 +1138,7 @@ class Program:
         goal = Goal(query)
         root = GoalNode(subject=goal)
         program_dict = self.sASP_program_dict
+        answer_set = 0
         work = [root]
         while work:
             current = work.pop()
