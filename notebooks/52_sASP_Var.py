@@ -115,6 +115,10 @@ class TopLevelSymbol(Symbol, abc.ABC):
     def function_arguments(self) -> Sequence[Symbol]:
         raise NotImplementedError
 
+    def match(self, other: ForwardTopLevelSymbol) -> bool:
+        return self.function_name == other.function_name and \
+               len(self.function_arguments) == len(other.function_arguments)
+
     def variable_normal_form_env(self, env: Optional[Dict[tuple, Variable]] = None) -> Dict[tuple, Variable]:
         if env is None:
             env = dict()
@@ -227,6 +231,7 @@ class Atom:
         return Atom(self.symbol.substitute_variables(substitute_map))
 
 
+@dataclass(order=True, frozen=True)
 class ClauseElement(abc.ABC):
 
     @property
@@ -529,6 +534,9 @@ class NormalRule(Rule):
         return new_rule
 
 
+RuleMap = Mapping[str, Mapping[str, Sequence[NormalRule]]]
+
+
 @dataclass(order=True, frozen=True)
 class IntegrityConstraint(Rule):
     body: Sequence[BasicLiteral] = field(default_factory=tuple)
@@ -550,7 +558,7 @@ class IntegrityConstraint(Rule):
 
 @dataclass(order=True, frozen=True)
 class Goal(Rule):
-    body: Sequence[BasicLiteral] = field(default_factory=tuple)
+    body: Sequence[ClauseElement] = field(default_factory=tuple)
     head: Directive = field(default=Directive.true(), init=False)
 
     @property
@@ -574,26 +582,137 @@ def empty_constraints():
     return defaultdict(set)
 
 
+Constraints = Dict[Variable, Set[Symbol]]
+
+
 @dataclass
 class CoinductiveHypothesesSet:
     hypotheses: Set[BasicLiteral] = field(default_factory=set)
     bounds: Dict[Variable, Set[Symbol]] = field(default_factory=empty_constraints)
-    negative_constraints: Dict[Variable, Set[Symbol]] = field(default_factory=empty_constraints)
+    prohibited_values: Dict[Variable, Set[Symbol]] = field(default_factory=empty_constraints)
+    __last_free_var: int = field(init=False, repr=False, default=0)
 
     def __contains__(self, item):
         if isinstance(item, BasicLiteral):
             return item in self.hypotheses
         if isinstance(item, Variable):
-            return self.bounds[item] or self.negative_constraints[item]
+            return self.bounds[item] or self.prohibited_values[item]
 
     def __str__(self):
         return self.fmt()
 
     def is_negativly_constrained(self, variable: Variable) -> bool:
-        return variable in self.negative_constraints and bool(self.negative_constraints[variable])
+        return variable in self.prohibited_values and bool(self.prohibited_values[variable])
 
     def is_bound(self, variable: Variable) -> bool:
         return variable in self.bounds and bool(self.bounds[variable])
+
+    # TODO: Exact match for Symbols?
+    def exact_match(self, left: Symbol, right: Symbol) -> bool:
+        unifiable, chss_ = self.constructive_unification(left, right)
+        if not unifiable:
+            return False
+        assert chss_ is not None and chss_
+        return chss_[0].prohibited_values == self.prohibited_values
+
+    def exact_match_any(self, literal: BasicLiteral, bounds: Optional[Constraints] = None,
+                        prohibited_values: Optional[Constraints] = None) -> bool:
+        for hypothesis in self.hypotheses:
+            # TODO: Write function for this
+            if hypothesis.sign == literal.sign and hypothesis.atom_signature == literal.atom_signature:
+                exact_match = self.exact_match(hypothesis.atom.symbol, literal.atom.symbol)
+                if exact_match:
+                    return True
+        return False
+
+    def unifies_any(self, literal: BasicLiteral) -> bool:
+        for hypothesis in self.hypotheses:
+            # TODO: Write function for this
+            if hypothesis.sign == literal.sign and hypothesis.atom_signature == literal.atom_signature:
+                unifiable, _ = self.constructive_unification(hypothesis.atom.symbol, literal.atom.symbol)
+                if unifiable:
+                    return True
+        return False
+
+    def constructive_unification(self, left: Symbol, right: Symbol) -> Tuple[
+        bool, Optional[List[ForwardCoinductiveHypothesesSet]]]:
+
+        if isinstance(left, Variable) and isinstance(right, Variable):
+            chs = deepcopy(self)
+            chs.prohibited_values[left].update(chs.prohibited_values[right])
+            chs.prohibited_values[right].update(self.prohibited_values[left])
+            return True, [chs]
+        elif isinstance(left, TopLevelSymbol) and isinstance(right, TopLevelSymbol):
+            if left.match(right):
+                chs = deepcopy(self)
+                for i in range(left.arity):
+                    left_arg = left.function_arguments[i]
+                    right_arg = right.function_arguments[i]
+                    unifiable, chss = chs.constructive_unification(left_arg, right_arg)
+                    if not unifiable:
+                        return False, None
+                    chs = chss[0]
+                return True, [chs]
+            else:
+                return False, None
+
+        if isinstance(left, Variable) and not isinstance(right, Variable):
+            var = left
+            symbol = right
+        elif not isinstance(left, Variable) and isinstance(right, Variable):
+            var = right
+            symbol = left
+        else:
+            return left == right, [deepcopy(self)]
+
+        for prohibited in self.prohibited_values[var]:
+            unifies, _ = self.constructive_unification(prohibited, symbol)
+            if unifies:
+                return False, None
+        chs = deepcopy(self)
+        chs.bounds[var].add(symbol)
+        return True, [chs]
+
+    def constructive_disjunification(self, left: Symbol, right: Symbol) -> Tuple[
+        bool, Optional[List[ForwardCoinductiveHypothesesSet]]]:
+
+        if isinstance(left, Variable) and self.is_negativly_constrained(left) and isinstance(right,
+                                                                                             Variable) and self.is_negativly_constrained(
+            right):
+            raise Exception("Attempting to disjunify two negatively constrained Variables")
+
+        if isinstance(left, TopLevelSymbol) and isinstance(right, TopLevelSymbol):
+            chs = deepcopy(self)
+            if left.match(right):
+                chss = []
+                for i in range(left.arity):
+                    left_arg = left.function_arguments[i]
+                    right_arg = right.function_arguments[i]
+                    disunifiable, chss_ = self.constructive_disjunification(left_arg, right_arg)
+                    if disunifiable:
+                        chss.extend(chss_)
+                return bool(chss), (chss or None)
+            else:
+                return True, [chs]
+
+        if isinstance(left, Variable) and not isinstance(right, Variable):
+            var = left
+            symbol = right
+        elif not isinstance(left, Variable) and isinstance(left, Variable):
+            var = right
+            symbol = left
+        else:
+            return left != right, [deepcopy(self)]
+
+        chs = deepcopy(self)
+        chs.prohibited_values[var].add(symbol)
+        return True, [chs]
+
+    def forall(self, variable: Variable, goal: Symbol, rule_map: RuleMap) -> Tuple[
+        bool, List[ForwardCoinductiveHypothesesSet]]:
+        chs = deepcopy(self)
+        chs.bounds[variable].clear()
+        chs.prohibited_values[variable].clear()
 
     def fmt(self, sep=' ', literal_sep=',', variable_sep=' ', constraint_sep=' '):
         fmt = "{}{}{}".format('{', literal_sep.join(map(str, self.hypotheses)), '}', )
@@ -608,52 +727,16 @@ class CoinductiveHypothesesSet:
         if self.bounds:
             fmt += variable_sep
         fmt += sep
-        for variable in self.negative_constraints:
+        for variable in self.prohibited_values:
             fmt += variable_sep
-            for negative_constraint in self.negative_constraints[variable]:
+            for negative_constraint in self.prohibited_values[variable]:
                 fmt += constraint_sep
                 fmt += "{} /= {}".format(variable, negative_constraint)
-            if self.negative_constraints[variable]:
+            if self.prohibited_values[variable]:
                 fmt += constraint_sep
-        if self.negative_constraints:
+        if self.prohibited_values:
             fmt += variable_sep
         return fmt
-
-    def bind_value(self, variable: Variable, value: Symbol) -> bool:
-        if not isinstance(value, Variable) and value not in self.bounds[variable] and len(self.bounds[variable]) > 0:
-            return False
-        if value in self.negative_constraints[variable]:
-            return False
-        #if not isinstance(value, Variable) and any(constructive_unification(value, negative_constraint) for negative_constraint in self.negative_constraints[variable]):
-        #    return False
-        self.bounds[variable].add(value)
-        return True
-
-    def forbid_value(self, variable: Variable, value: Symbol) -> bool:
-        if value in self.bounds[variable]:
-            return False
-        #if not isinstance(value, Variable) and any(constructive_unification(value, bound) for bound in self.bounds[variable]):
-        #    return False
-        self.negative_constraints[variable].add(value)
-        return True
-
-    def forbid_values(self, variable: Variable, *values: Symbol) -> bool:
-        if not self.bounds[variable].isdisjoint(values):
-            return False
-        for value in values:
-            c = self.forbid_value(variable, value)
-            if not c:
-                return False
-        return True
-
-    def positive_constraints(self, literal: BasicLiteral, variable: Variable) -> Set[Symbol]:
-        pass
-
-    def get_value(self, literal: BasicLiteral, variable: Variable) -> Optional[Symbol]:
-        return next(iter(self.positive_constraints(literal, variable)), None)
-
-    def negative_constraints(self, literal: BasicLiteral, variable: Variable) -> Set[Symbol]:
-        pass
 
     def unify(self, src: BasicLiteral, dst: BasicLiteral, dst_chs: ForwardCoinductiveHypothesesSet) -> bool:
         if src.atom.symbol.function_name != dst.atom.symbol.function_name:
@@ -675,7 +758,7 @@ class CoinductiveHypothesesSet:
                         unifiable = dst_chs.bind_value(dst, dst_arg, src_val)
                         if isinstance(src_arg, Variable):
                             unifiable = unifiable and dst_chs.forbid_values(dst, dst_arg,
-                                                                            *self.negative_constraints(src, src_arg))
+                                                                            *self.prohibited_values(src, src_arg))
                         if not unifiable:
                             return False
                     elif src_val != dst_val:
@@ -684,8 +767,13 @@ class CoinductiveHypothesesSet:
                     return False
         return True
 
-    def constructive_unification(self, left: Symbol, right: Symbol) -> bool:
-        pass
+    def next_free_var(self, prefix: str = "F"):
+        var = Variable("{}{}".format(prefix, self.__last_free_var))
+        self.__last_free_var += 1
+        while var in self.bounds or var in self.prohibited_values:
+            var = Variable("{}{}".format(prefix, self.__last_free_var))
+            self.__last_free_var += 1
+        return var
 
 
 Forward_BaseNode = TypeVar('Forward_BaseNode', bound='_BaseNode')
@@ -698,7 +786,10 @@ class _BaseNode:
     children: Optional[Sequence[Forward_BaseNode]]
     index: int
     is_exhausted: bool
-    hypotheses: Dict[BasicLiteral, Dict[Variable, Dict[str, Set[Symbol]]]]
+    chs: CoinductiveHypothesesSet
+
+    def __str__(self):
+        return "{}: {} ({}{})".format(type(self).__name__, self.subject, self.index, '' if self.is_exhausted else '+')
 
     @property
     def is_root(self) -> bool:
@@ -712,28 +803,31 @@ class _BaseNode:
     def is_expanded(self) -> bool:
         return self.children is not None
 
-    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+    def expand(self, rule_map: RuleMap):
+        raise NotImplementedError
+
+    def propagate_to_parent(self) -> Forward_BaseNode:
         raise NotImplementedError
 
 
 @dataclass
 class BaseNode(_BaseNode):
     subject: ClauseElement = field(default_factory=BasicLiteral)
-    parent: Optional[_BaseNode] = field(default=None)
-    children: Optional[Sequence[Forward_BaseNode]] = field(default=None)
+    parent: Optional[_BaseNode] = field(default=None, repr=False)
+    children: Optional[Sequence[Forward_BaseNode]] = field(default=None, repr=False)
     index: int = field(default=0)
     is_exhausted: bool = field(default=False)
-    hypotheses: Dict[BasicLiteral, Dict[Variable, Dict[str, Set[Symbol]]]] = field(default_factory=dict)
+    chs: CoinductiveHypothesesSet = field(default_factory=CoinductiveHypothesesSet)
 
 
-ForwardOrNode = TypeVar('ForwardOrNode', bound='OrNode')
-ForwardAndNode = TypeVar('ForwardAndNode', bound='AndNode')
+ForwardCallNode = TypeVar('ForwardCallNode', bound='CallNode')
+ForwardGoalNode = TypeVar('ForwardGoalNode', bound='GoalNode')
 
 
 @dataclass
 class Leaf(BaseNode):
     subject: Directive = field(default_factory=Directive.false)
-    parent: Optional[BaseNode] = field
+    parent: Optional[BaseNode] = field(default=None)
 
     @property
     def is_success(self) -> bool:
@@ -743,95 +837,213 @@ class Leaf(BaseNode):
     def is_expanded(self) -> bool:
         return True
 
+    @staticmethod
+    def fail(parent: BaseNode, chs: Optional[CoinductiveHypothesesSet] = None):
+        if chs is not None:
+            return Leaf(subject=Directive.false(), parent=parent, chs=chs)
+        return Leaf(subject=Directive.false(), parent=parent)
+
+    @staticmethod
+    def success(parent: BaseNode, chs: Optional[CoinductiveHypothesesSet] = None):
+        if chs is not None:
+            return Leaf(subject=Directive.true(), parent=parent, chs=chs)
+        return Leaf(subject=Directive.true(), parent=parent)
+
+    def propagate_to_parent(self) -> Union[ForwardCallNode, ForwardGoalNode]:
+        if isinstance(self.parent, CallNode):
+            parent = CallNode(subject=self.parent.subject,
+                              parent=self.parent.parent,
+                              children=self.parent.children,
+                              index=self.parent.index,
+                              chs=deepcopy(self.chs))
+        elif isinstance(self.parent, GoalNode):
+            parent = self.parent
+        else:
+            assert False, "Unknown parent node {} with type {}.".format(self.parent, type(self.parent).__name__)
+        self.parent = parent
+        return parent
+
 
 @dataclass
-class OrNode(BaseNode):
+class CallNode(BaseNode):
     subject: ClauseElement = field(default_factory=BasicLiteral)
-    parent: Optional[ForwardAndNode] = field(default=None)
-    children: Optional[MutableSequence[Union[ForwardAndNode, Leaf]]] = field(default=None)
+    parent: Optional[ForwardGoalNode] = field(default=None)
+    children: Optional[MutableSequence[Union[ForwardGoalNode, Leaf]]] = field(default=None)
+    is_checked: bool = field(default=False)
 
     @property
     def is_success(self) -> bool:
         return self.is_expanded and any(child.is_success for child in self.children)
 
-    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+    def expand(self, rule_map: RuleMap) -> Optional[List[Union[ForwardGoalNode, Leaf]]]:
         if self.children is None:
             self.children = []
-        assert self.children is not None
-        child = None
+        children = None
+        # CHECKS
         if isinstance(self.subject, BasicLiteral):
-            if self.subject in self.hypotheses:
-                child = Leaf(subject=Directive.true(), parent=self)
-            elif -self.subject in self.hypotheses:
-                child = Leaf(subject=Directive.false(), parent=self)
+            if not self.is_checked:
+                if self.chs.exact_match_any(-self.subject):
+                    child = Leaf.fail(self)
+                    children = [child]
+                elif self.chs.exact_match_any(self.subject):
+                    child = Leaf.success(self)
+                    children = [child]
+                else:
+                    chss = []
+                    children = []
+                    for hypothesis in self.chs.hypotheses:
+                        if hypothesis.sign == self.subject.sign and hypothesis.atom_signature == self.subject.atom_signature:
+                            unifiable, _chss = self.chs.constructive_unification(hypothesis.atom.symbol,
+                                                                                 self.subject.atom.symbol)
+                            if unifiable:
+                                chss.extend(_chss)
+                    for chs in chss:  # type: ForwardCoinductiveHypothesesSet
+                        node = self
+                        negations = 0
+                        while not node.parent.is_root:
+                            if node.subject == self.subject:
+                                if node.chs.exact_match_any(self.subject, chs.bounds, chs.prohibited_values):
+                                    if negations == 0:
+                                        child = Leaf.fail(self)
+                                        children.append(child)
+                                    elif negations % 2 == 0:
+                                        child = Leaf.success(self, chs)
+                                        child.parent = self
+                                        children.append(child)
+                                elif node.chs.unifies_any(self.subject):
+                                    if negations > 0 and negations % 2 == 0:
+                                        child = Leaf.success(self, chs)
+                                        children.append(child)
+                            node = node.parent.parent
+
             else:
-                hypotheses = sorted(*self.hypotheses)
-                if self.index < len(hypotheses):
-                    pass
-
-                # else:
-                rules_ = rule_dict[self.subject.atom_signature]
+                # Rule Expansion
+                applicable_rules = rule_map[self.subject.atom_signature]
                 if self.subject.is_pos:
-                    rules = rules_['primal']
+                    rules = applicable_rules['primal']
                 else:
-                    rules = rules_['dual']
-                if self.index >= len(rules):
-                    self.is_exhausted = True
-                else:
+                    rules = applicable_rules['dual']
+                if self.index < len(rules):
                     rule = rules[self.index]
-                    child_hypotheses = dict()
-                    #unifiable = unify(self.subject, self.hypotheses,
-                    #                  rule.head, child_hypotheses)
-                    #if unifiable:
-                    #    child = AndNode(subject=rule,
-                    #                    parent=self,
-                    #                    hypotheses=child_hypotheses),
+                    unifiable, chss_ = self.chs.constructive_unification(self.subject.atom.symbol,
+                                                                         rule.head.atom.symbol)
+                    if unifiable:
+                        child = GoalNode(subject=rule, parent=self, chs=chss_[0])
+                        children = [child]
+                    self.index += 1
+                else:
+                    self.is_exhausted = True
 
+            self.is_checked = True
         elif isinstance(self.subject, Comparison):
-            if self.subject.comparison.Equal:
-                pass
-            elif self.subject.comparison.NotEqual:
-                pass
+            if self.subject.comparison is ComparisonOperator.Equal:
+                unifiable, chss = self.chs.constructive_unification(self.subject.left, self.subject.right)
+                if unifiable:
+                    child = Leaf.success(self, chss[0])
+                    children = [child]
+                else:
+                    child = Leaf.fail(self, chss[0])
+                    children = [child]
+            elif self.subject.comparison is ComparisonOperator.NotEqual:
+                unifiable, chss = self.chs.constructive_disjunification(self.subject.left, self.subject.right)
+                if unifiable:
+                    children = []
+                    for chs in chss:
+                        child = Leaf.success(self, chs)
+                        children.append(child)
+                else:
+                    child = Leaf.fail(self)
+                    children = [child]
         elif isinstance(self.subject, Directive):
-            if self.subject.name in ('true', 'false'):
-                child = Leaf(self.subject, parent=self)
+            if self.subject.name == 'forall':
+                chs = deepcopy(self.chs)
+                chs.clear(self.subject.arguments[0])
+                if not self.is_checked:
+                    child = GoalNode(subject=Goal((self.subject.arguments[1])),
+                                     parent=self,
+                                     chs=chs)
+                    children = [child]
+                else:
+                    if self.children[0].chs.is_unbound(self.subject.arguments[0]):
+                        child = Leaf.success(self, chs)
+                        children = [child]
+                    elif self.children[0].chs.is_bound(self.subject.arguments[0]):
+                        child = Leaf.fail(self)
+                        children = [child]
+                        self.is_exhausted = True
+                    else:
+                        prohibited_values = self.children[0].chs.prohibited_values[self.subject.arguments[0]]
+                        variable = self.subject.arguments[0]
+                        subgoal = self.subject.arguments[1]
+                        goals = []
+                        for prohibited_value in prohibited_values:
+                            free_var = chs.next_free_var()
+                            chs = deepcopy(self.chs)
+                            chs.clear(self.subject.arguments[0])
+                            chs.bind_value(free_var, prohibited_value)
+                            goals.append(BasicLiteral(atom=Atom(subgoal)).substitute_variables({variable: free_var}))
+                        goal = Goal(tuple(goals))
+                        child = GoalNode(subject=goal, parent=self, chs=deepcopy(self.chs))
+                        children = [child]
 
-        if child is not None:
-            self.children.append(child)
-        self.index += 1
-        return child
+        else:
+            assert False
+        if children is not None:
+            self.children.extend(children)
+        return children
+
+    def propagate_to_parent(self) -> ForwardGoalNode:
+        if isinstance(self.subject, BasicLiteral):
+            self.chs.hypotheses.add(self.subject)
+        parent = GoalNode(subject=self.parent.subject,
+                          parent=self.parent.parent,
+                          children=self.parent.children,
+                          index=self.parent.index,
+                          chs=deepcopy(self.chs))
+        self.parent = parent
+        return parent
 
 
 @dataclass
-class AndNode(BaseNode):
+class GoalNode(BaseNode):
     subject: Rule = field(default_factory=NormalRule)
-    parent: Optional[OrNode] = field(default=None)
-    children: Optional[MutableSequence[Union[OrNode, Leaf]]] = field(default=None)
+    parent: Optional[CallNode] = field(default=None)
+    children: Optional[MutableSequence[Union[CallNode, Leaf]]] = field(default=None)
 
     @property
     def is_success(self) -> bool:
-        return self.is_expanded and all(child.is_success for child in self.children)
+        return self.is_exhausted and all(child.is_success for child in self.children)
 
-    def expand(self, rule_dict: Mapping[str, Mapping[str, List[NormalRule]]]):
+    def expand(self, rule_map: RuleMap) -> Optional[List[Union[CallNode, Leaf]]]:
         if self.children is None:
             self.children = []
         child = None
         if self.subject.body:
             if self.index < len(self.subject.body):
                 element = self.subject.body[self.index]
-                child = OrNode(subject=element,
-                               parent=self,
-                               hypotheses=deepcopy(self.hypotheses))
+                child = CallNode(subject=element,
+                                 parent=self,
+                                 chs=deepcopy(self.chs))
             else:
                 self.is_exhausted = True
         else:
             child = Leaf(subject=Directive.true(), parent=self)
             self.is_exhausted = True
 
+        self.index += 1
         if child is not None:
             self.children.append(child)
-        self.index += 1
-        return child
+            return [child]
+        return None
+
+    def propagate_to_parent(self) -> CallNode:
+        parent = CallNode(subject=self.parent.subject,
+                          parent=self.parent.parent,
+                          children=self.parent.children,
+                          index=self.parent.index,
+                          chs=deepcopy(self.chs))
+        self.parent = parent
+        return parent
 
 
 @dataclass(order=True, frozen=True)
@@ -923,8 +1135,8 @@ class Program:
         return "{}{}{}".format(b, sep.join(map(str, self.rules)), e)
 
     def evaluate_backwards(self, *query: ClauseElement, nmr_check: bool = True):
-        goal = Goal(*query)
-        root = AndNode(subject=goal)
+        goal = Goal(query)
+        root = GoalNode(subject=goal)
         program_dict = self.sASP_program_dict
         work = [root]
         while work:
@@ -932,11 +1144,17 @@ class Program:
             if current.is_success:
                 if current.is_root:
                     yield deepcopy(current)
-                elif current.parent.is_success:
-                    work.append(current.parent)
+                else:
+                    parent = current.propagate_to_parent()
+                    work.append(parent)
             elif not current.is_exhausted:
-                current.expand(program_dict)
-                work.extend(reversed(current.children))
+                children = current.expand(program_dict)
+                if children is None or not children:
+                    work.append(current)
+                else:
+                    if isinstance(current, CallNode):
+                        work.append(current)
+                    work.extend(children)
 
     @staticmethod
     def propositional_dual(propositional_rules: Sequence[Rule]):
@@ -1011,7 +1229,7 @@ class Program:
         for rule in predicate_rules:
             assert isinstance(rule, NormalRule)
             head: BasicLiteral = rule.head
-            body: Sequence[ClauseElement] = tuple(sorted(set(rule.body)))
+            body: Sequence[ClauseElement] = tuple(set(rule.body))
             if body not in b2n:
                 n += 1
                 b2n[body] = n
@@ -1060,6 +1278,7 @@ class Program:
                 dual_rules.append(NormalRule(-l))
         return dual_rules
 
+
 A = Variable('A')
 B = Variable('B')
 X = Variable('X')
@@ -1067,6 +1286,7 @@ Y = Variable('Y')
 t_A_A = BasicLiteral(atom=Atom(Function(name='t', arguments=(A, A))))
 t_A_B = BasicLiteral(atom=Atom(Function(name='t', arguments=(A, B))))
 q_0 = BasicLiteral(atom=Atom(Function(name='q', arguments=(Term.zero(),))))
+q_1 = BasicLiteral(atom=Atom(Function(name='q', arguments=(Term.one(),))))
 _a = Function('a')
 _b = Function('b')
 _c = Function('c')
@@ -1074,6 +1294,7 @@ _q_abc = Function(name='q', arguments=(_a, _b, _c))
 _r = Function(name='r')
 _s = Function(name='s')
 p_ = BasicLiteral(atom=Atom(Function(name='p', arguments=(_q_abc, _r, _s))))
+p_0 = BasicLiteral(atom=Atom(Function(name='p', arguments=(Term.zero(),))))
 p_1 = BasicLiteral(atom=Atom(Function(name='p', arguments=(Term.one(),))))
 q_A = BasicLiteral(atom=Atom(Function(name='q', arguments=(A,))))
 p_A = BasicLiteral(atom=Atom(Function(name='p', arguments=(A,))))
@@ -1083,6 +1304,9 @@ q_X = BasicLiteral(atom=Atom(Function(name='q', arguments=(X,))))
 q_Y = BasicLiteral(atom=Atom(Function(name='q', arguments=(Y,))))
 Y_ne_a = Comparison(Y, ComparisonOperator.NotEqual, _a)
 Y_e_a = Comparison(Y, ComparisonOperator.Equal, _a)
+X_e_0 = Comparison(X, ComparisonOperator.Equal, Term.zero())
+X_ne_0 = Comparison(X, ComparisonOperator.NotEqual, Term.zero())
+X_ne_Y = Comparison(X, ComparisonOperator.NotEqual, Y)
 
 r1 = NormalRule(head=t_A_A)
 r2 = NormalRule(head=q_0)
@@ -1093,6 +1317,12 @@ r6 = NormalRule(head=t_A_B)
 r7 = NormalRule(head=p, body=(-q_X,))
 r8 = NormalRule(head=q_Y, body=(Y_e_a,))
 r9 = NormalRule(head=q_Y, body=(Y_ne_a,))
+r10 = NormalRule(head=q_1, body=(q_0,))
+r11 = NormalRule(head=p_1, body=(p_A,))
+r12 = NormalRule(head=p_1, body=(-p_0,))
+r13 = NormalRule(head=p_0, body=(q_1,))
+r14 = NormalRule(head=p_0, body=(-q_X,))
+r15 = NormalRule(head=p_1, body=(q_X, -q_Y, X_ne_Y))
 
 print("#" * 80)
 print("NormalRule.variable_normal_form():")
@@ -1236,34 +1466,196 @@ print("% Dual:")
 print('\n'.join(map(str, dual)))
 print("-" * 10)
 
-print("#" * 80)
-print("Unify:")
-print("-" * 20)
+program8 = Program((r2, r14, r15))
+sASP = program8.sASP_program_dict
 
-_src_chs = CoinductiveHypothesesSet()
-_dst_chs = CoinductiveHypothesesSet()
+primal = []
+dual = []
+for signature in sASP:
+    pos = sASP[signature]['primal']
+    neg = sASP[signature]['dual']
+    primal.extend(pos)
+    dual.extend(neg)
 
-_unifiable1 = _src_chs.unify(q_0, q_X, _dst_chs)
-print("{}: ".format(_unifiable1), _dst_chs)
+print("% Primal:")
+print('\n'.join(map(str, primal)))
+print("% Dual:")
+print('\n'.join(map(str, dual)))
+print("-" * 10)
 
-_src_chs = CoinductiveHypothesesSet()
-_dst_chs = CoinductiveHypothesesSet()
+# print("#" * 80)
+# print("Unify:")
+# print("-" * 20)
+#
+# _src_chs = CoinductiveHypothesesSet()
+# _dst_chs = CoinductiveHypothesesSet()
+#
+# _unifiable1 = _src_chs.unify(q_0, q_X, _dst_chs)
+# print("{}: ".format(_unifiable1), _dst_chs)
+#
+# _src_chs = CoinductiveHypothesesSet()
+# _dst_chs = CoinductiveHypothesesSet()
+#
+# _unifiable2 = _src_chs.unify(q_X, q_0, _dst_chs)
+#
+# print("{}: ".format(_unifiable2), _dst_chs)
+#
+# _src_chs = CoinductiveHypothesesSet()
+# _dst_chs = CoinductiveHypothesesSet()
+#
+# _unifiable3 = _src_chs.unify(q_X, p_1, _dst_chs)
+#
+# print("{}: ".format(_unifiable3), _dst_chs)
+#
+# _src_chs = CoinductiveHypothesesSet({q_X: {X: dict(Positive={Term.one()}, Negative={Term.zero()})}})
+# _dst_chs = CoinductiveHypothesesSet()
+#
+# _unifiable4 = _src_chs.unify(q_X, q_Y, _dst_chs)
+#
+# print(_src_chs)
+# print("{}: ".format(_unifiable4), _dst_chs)
 
-_unifiable2 = _src_chs.unify(q_X, q_0, _dst_chs)
+program5 = Program((r2,))
 
-print("{}: ".format(_unifiable2), _dst_chs)
+prooftree = next(program5.evaluate_backwards(q_0), "UNSAT")
 
-_src_chs = CoinductiveHypothesesSet()
-_dst_chs = CoinductiveHypothesesSet()
+print(prooftree, end=' ')
+if isinstance(prooftree, BaseNode):
+    print(prooftree.chs)
+else:
+    print()
 
-_unifiable3 = _src_chs.unify(q_X, p_1, _dst_chs)
+prooftree = next(program5.evaluate_backwards(q_Y), "UNSAT")
 
-print("{}: ".format(_unifiable3), _dst_chs)
+print(prooftree, end=' ')
+if isinstance(prooftree, BaseNode):
+    print(prooftree.chs)
+else:
+    print()
 
-_src_chs = CoinductiveHypothesesSet({q_X: {X: dict(Positive={Term.one()}, Negative={Term.zero()})}})
-_dst_chs = CoinductiveHypothesesSet()
+prooftree = next(program5.evaluate_backwards(-p_1), "UNSAT")
 
-_unifiable4 = _src_chs.unify(q_X, q_Y, _dst_chs)
+print(prooftree, end=' ')
+if isinstance(prooftree, BaseNode):
+    print(prooftree.chs)
+else:
+    print()
 
-print(_src_chs)
-print("{}: ".format(_unifiable4), _dst_chs)
+prooftree = next(program5.evaluate_backwards(-p_1), "UNSAT")
+
+print(prooftree, end=' ')
+if isinstance(prooftree, BaseNode):
+    print(prooftree.chs)
+else:
+    print()
+
+program6 = Program((r2, r10))
+prooftrees_gen = program6.evaluate_backwards(q_Y, q_A)
+prooftree1 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree1, end=' ')
+if isinstance(prooftree1, BaseNode):
+    print(prooftree1.chs)
+else:
+    print()
+
+prooftree2 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree2, end=' ')
+if isinstance(prooftree2, BaseNode):
+    print(prooftree2.chs)
+else:
+    print()
+
+prooftree3 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree3, end=' ')
+if isinstance(prooftree3, BaseNode):
+    print(prooftree3.chs)
+else:
+    print()
+
+prooftree4 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree4, end=' ')
+if isinstance(prooftree4, BaseNode):
+    print(prooftree4.chs)
+else:
+    print()
+
+prooftree5 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree5, end=' ')
+if isinstance(prooftree5, BaseNode):
+    print(prooftree5.chs)
+else:
+    print()
+
+prooftrees_gen = program6.evaluate_backwards(q_X, X_e_0)
+prooftree1 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree1, end=' ')
+if isinstance(prooftree1, BaseNode):
+    print(prooftree1.chs)
+else:
+    print()
+
+prooftree2 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree2, end=' ')
+if isinstance(prooftree2, BaseNode):
+    print(prooftree2.chs)
+else:
+    print()
+
+prooftrees_gen = program6.evaluate_backwards(q_X, X_ne_0)
+prooftree1 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree1, end=' ')
+if isinstance(prooftree1, BaseNode):
+    print(prooftree1.chs)
+else:
+    print()
+
+prooftree2 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree2, end=' ')
+if isinstance(prooftree2, BaseNode):
+    print(prooftree2.chs)
+else:
+    print()
+
+prooftrees_gen = program6.evaluate_backwards(X_ne_0, q_X)
+prooftree1 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree1, end=' ')
+if isinstance(prooftree1, BaseNode):
+    print(prooftree1.chs)
+else:
+    print()
+
+prooftree2 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree2, end=' ')
+if isinstance(prooftree2, BaseNode):
+    print(prooftree2.chs)
+else:
+    print()
+
+program7 = Program((r2, r12, r13))
+prooftrees_gen = program7.evaluate_backwards(-p_0)
+prooftree1 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree1, end=' ')
+if isinstance(prooftree1, BaseNode):
+    print(prooftree1.chs)
+else:
+    print()
+
+prooftree2 = next(prooftrees_gen, "UNSAT")
+
+print(prooftree2, end=' ')
+if isinstance(prooftree2, BaseNode):
+    print(prooftree2.chs)
+else:
+    print()
