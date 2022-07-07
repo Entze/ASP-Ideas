@@ -1,4 +1,4 @@
-from clingo import Symbol
+from clingo import Symbol, SymbolType
 
 import networkx as nx
 
@@ -10,11 +10,14 @@ def symbol_to_str(symbol: Symbol):
     while stack:
         current = stack.pop()
         if isinstance(current, Symbol):
-            string += current.name
-            if current.arguments:
-                stack.append(')')
-                stack.extend(reversed(current.arguments))
-                stack.append('(')
+            if current.type == SymbolType.Number:
+                string += str(current.number)
+            elif current.type == SymbolType.Function:
+                string += current.name
+                if current.arguments:
+                    stack.append(')')
+                    stack.extend(reversed(current.arguments))
+                    stack.append('(')
         elif isinstance(current, str):
             string += current
     return string
