@@ -19,8 +19,8 @@ class FrozenRelation:
     def __str__(self):
         return "{}{}{}".format('{', ",".join(map(lambda e: "({})".format(','.join(map(str, e))), self.relation_set)), '}')
 
-    def related(self, item1, item2) -> bool:
-        return (item1, item2) in self.relation_set
+    def related(self, *items) -> bool:
+        return items in self.relation_set
 
     def get(self, item) -> Set[_U]:
         return {elem[1] for elem in self.relation_set if elem[0] == item}
@@ -146,7 +146,7 @@ class Situation:
 
     @property
     def is_root(self) -> bool:
-        return self.parent is not None
+        return self.parent is None
 
     @property
     def time(self) -> int:
@@ -167,7 +167,7 @@ _ForwardPath = TypeVar('_ForwardPath', bound='Path')
 
 @dataclass(order=True, frozen=True)
 class Path:
-    states: Sequence[State] = field(default_factory=tuple)
+    states: Sequence[State] = field(default_factory=tuple) # TODO: Change State -> Sequence
     actions: Sequence[Action] = field(default_factory=tuple)
 
     @property
@@ -189,20 +189,23 @@ class Path:
         if state not in self.states:
             return Path()
         offset = self.time(state)
-        if offset + 1 < len(self.actions):
-            return Path(self.states[offset:], self.actions[offset + 1:])
+        if offset > 0:
+            return Path(self.states[offset:], self.actions[offset:])
         else:
-            return Path(self.states[offset:])
+            return Path(self.states[offset:], )
 
 #%%
 class Formula:
     def __neg__(self):
+        # -Formula
         return Negation(self)
 
     def __and__(self, other):
+        # Formula & Formula
         return Conjunction(self, other)
 
     def __or__(self, other):
+        # Formula | Formula
         return Disjunction(self, other)
 
     def evaluate(self, causal_setting: _ForwardCausalSetting, elem: Union[Situation, Path]) -> bool:
@@ -228,6 +231,9 @@ class StateFormula(Formula):
 
 #%%
 class PathFormula(Formula):
+
+    # TODO: evaluate_state ?
+
     pass
 #%%
 @dataclass(order=True, frozen=True)
@@ -240,7 +246,12 @@ class CausalSetting:
 
     @cache
     def poss(self, action: Action, situation: Situation) -> bool:
-        raise NotImplementedError
+        if action.symbol == 'sense':
+            return action.arguments[0] in situation.state
+        elif action.symbol == 'req':
+            return False
+        else:
+            raise NotImplementedError
 
     @cache
     def legal_actions(self, situation: Situation) -> Iterator[Action]:
@@ -413,14 +424,14 @@ class Know(StateFormula):
     formula: Formula
 
     def evaluate_situation(self, causal_setting: CausalSetting, situation: Situation) -> bool:
-        return causal_setting.know(self, situation)
+        return causal_setting.know(self.formula, situation)
 #%%
 @dataclass(order=True, frozen=True)
 class Intention(StateFormula):
     formula: Formula
 
     def evaluate_state(self, causal_setting: CausalSetting, situation: Situation) -> bool:
-        raise NotImplementedError
+        return causal_setting.intention(self.formula, situation)
 
 #%%
 @dataclass(order=True, frozen=True)
@@ -572,10 +583,8 @@ class DroneExample(CausalSetting):
     def poss(self, action: Action, situation: Situation) -> bool:
         if action not in self.action_alphabet:
             return False
-        if action.symbol == 'sense':
-            return True
-        elif action.symbol == 'req':
-            return True
+        if action.symbol in ('sense', 'req'):
+            return super(DroneExample, self).poss(action, situation)
         l = action.arguments[0]
         atom_At_l = Atom('At', (l,))
         At_l = Literal(atom_At_l)
